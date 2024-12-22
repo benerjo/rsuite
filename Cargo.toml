@@ -1,0 +1,40 @@
+[package]
+authors = ["Benerjo <benerjo@gmail.com>"]
+description = "A collection of programs to make musing using JACK."
+edition = "2021"
+license = "GPLv3"
+name = "rsuite"
+readme = "README.md"
+version = "0.0.1"
+
+[dependencies]
+bitflags = "2.6"
+jack-sys = "0.5"
+lazy_static = "1.4"
+libc = "0.2"
+jack = "0.13"
+riff = "2.0"
+eframe = "0.30.0"
+egui_plot = "0.30.0"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
+rand = "0.8"
+enum-iterator = "2.1.0"
+
+[[bin]]
+name = "rsynth"
+[[bin]]
+name = "mididebug"
+[[bin]]
+name = "smooth"
+[[bin]]
+name = "recorder"
+[[bin]]
+name = "kick"
+[[bin]]
+name = "transposer"
+
+[features]
+default = []
+metadata = []
