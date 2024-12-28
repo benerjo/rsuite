@@ -24,7 +24,7 @@ jobs:
 
       - name: Install Jack Audio Development Kit
         run: |
-          choco install jack2-dev -y
+          choco install jack -y
 
       - name: Build the application
         run: |
