@@ -153,13 +153,8 @@ impl SmoothUI {
             }
         }
         let range = std::ops::RangeInclusive::new(MIN_ALPHA, MAX_ALPHA);
-        let text = format!("Alpha: {:.5}", self.current_alpha);
-        ui.add_enabled(
-            true,
-            egui::Slider::new(&mut self.current_alpha, range)
-                .show_value(false)
-                .text(text),
-        );
+        crate::utils::create_f64_slider(ui, "Alpha", &mut self.current_alpha, range);
+
         crate::utils::show_logs(ui, &mut self.messages);
     }
 
