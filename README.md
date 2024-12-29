@@ -61,6 +61,7 @@ The different elements that can be configured:
 * The relative volume of a few overtones/undertones 
 * The duration and shape of the fade-in
 * The duration and shape of the fade-out
+* The intensity and speed of the frequence modulation
 
 #### Snare
 

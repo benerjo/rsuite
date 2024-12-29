@@ -91,8 +91,10 @@ pub struct Player {
     frame_t: f64,
     /// Time dilation
     time_dilation_factor: f64,
-    /// The time that has passed since the beginning
+    /// The dilated time that has passed since the beginning
     time: f64,
+    /// The real time that has passed since the synth is playing
+    real_time: f64,
     /// The input midi port
     midi_in: jack::Port<jack::MidiIn>,
     /// The output audio port
@@ -146,6 +148,7 @@ impl Player {
             frame_t: 1.0 / sample_rate as f64,
             time_dilation_factor: 1.0,
             time: 0.0,
+            real_time: 0.0,
             midi_in: client.register_port("midi_input", jack::MidiIn::default())?,
             audio_mono_out: client.register_port("music_out", jack::AudioOut::default())?,
             change_listener: channel_input,
@@ -294,6 +297,15 @@ impl Player {
                                 let new_gain = (1 + value) as f64 * GAIN_STEP;
                                 self.config.gain = new_gain;
                             }
+                            KeyBoardKey::Modulation => {
+                                self.config.modulation = value;
+                            }
+                            KeyBoardKey::ModulationSpeed => {
+                                self.config.mod_speed = (value as f64) / 4.0;
+                            }
+                            KeyBoardKey::ModulationIntensity => {
+                                self.config.mod_intensity = (value as f64) / 128.0;
+                            }
                             _ => {}
                         },
                     }
@@ -380,9 +392,16 @@ impl Player {
             }
             value *= self.config.gain;
             *v = value as f32;
-            self.time += self.frame_t * self.time_dilation_factor;
+
+            let modulation_aux =
+                (self.config.modulation as f64) * self.real_time * std::f64::consts::PI
+                    / self.config.mod_speed;
+            let modulation = self.config.mod_intensity * modulation_aux.sin() + 1.0;
+            self.time += self.frame_t * self.time_dilation_factor * modulation;
+            self.real_time += self.frame_t;
             if mute {
                 self.time = 0.0;
+                self.real_time = 0.0;
             }
         }
 

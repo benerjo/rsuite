@@ -19,6 +19,12 @@ pub struct Configuration {
     pub fade_out_shape: u8,
     /// The gain we appy on the amplitude
     pub gain: f64,
+    /// The modulation to apply
+    pub modulation: u8,
+    /// The intensity of the modulation
+    pub mod_intensity: f64,
+    /// The speed of the modulation
+    pub mod_speed: f64,
 }
 
 impl Configuration {
@@ -32,6 +38,9 @@ impl Configuration {
             fade_out_duration: 0.1,
             fade_out_shape: 64,
             gain: 1.0,
+            modulation: 0,
+            mod_intensity: 0.1,
+            mod_speed: 8.0,
         }
     }
 }

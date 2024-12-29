@@ -1,6 +1,9 @@
 use eframe::egui::{self};
 use egui_plot::{Line, PlotPoints};
-use std::sync::mpsc::{Receiver, Sender};
+use std::{
+    ops::RangeInclusive,
+    sync::mpsc::{Receiver, Sender},
+};
 
 use crate::synth::{
     hardware::KeyBoardKey,
@@ -50,6 +53,9 @@ impl<'c> RustySynth<'c> {
                 KeyBoardKey::FadeOutDuration,
                 KeyBoardKey::FadeOutShape,
                 KeyBoardKey::Gain,
+                KeyBoardKey::Modulation,
+                KeyBoardKey::ModulationSpeed,
+                KeyBoardKey::ModulationIntensity,
             ],
             client: client,
         };
@@ -214,6 +220,20 @@ impl<'c> RustySynth<'c> {
         // Gain
         //
         Self::create_f64_slider(ui, "Gain: ", &mut self.configuration.gain, GAIN_STEP);
+
+        crate::utils::create_u8_slider(ui, "Modulation: ", &mut self.configuration.modulation);
+        crate::utils::create_f64_slider(
+            ui,
+            "Modulation speed",
+            &mut self.configuration.mod_speed,
+            RangeInclusive::new(0.0, 32.0),
+        );
+        crate::utils::create_f64_slider(
+            ui,
+            "Modulation intensity",
+            &mut self.configuration.mod_intensity,
+            RangeInclusive::new(0.0, 1.0),
+        );
 
         if current_config != self.configuration {
             if let Err(e) = self.commands.send(MessageToPlayer::NewConfiguration(
