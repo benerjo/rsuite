@@ -5,7 +5,7 @@ use std::{
 
 use crate::synth::{
     hardware::{HardWare, KeyBoardKey},
-    rsynth::configuration::{Configuration, ConfigurationChange},
+    rsynth::configuration::Configuration,
 };
 use crate::{midiinput::MidiInput, utils::KeyBoardKeySetter};
 
@@ -16,25 +16,26 @@ pub const OVERTONE_STEP: f64 = 1.0 / 128.0;
 
 ///This enum represent the different elements that can change for the player
 #[derive(Debug)]
-pub enum PlayerChange {
-    Message(String),
+pub enum MessageToUI {
+    NewConfiguration(Configuration),
     Error(PlayerError),
 }
 
 #[derive(Debug)]
-pub enum ExternalPlayerInput {
+pub enum MessageToPlayer {
     NewKeyboardKey(KeyBoardKey),
     ClearKeybaordKey(KeyBoardKey),
+    NewConfiguration(Configuration),
     ClearAllKeyboardKeys,
     SaveConf,
     LoadConf,
 }
 
-impl From<KeyBoardKeySetter> for ExternalPlayerInput {
+impl From<KeyBoardKeySetter> for MessageToPlayer {
     fn from(value: KeyBoardKeySetter) -> Self {
         match value {
-            KeyBoardKeySetter::Set(k) => ExternalPlayerInput::NewKeyboardKey(k),
-            KeyBoardKeySetter::Clear(k) => ExternalPlayerInput::ClearKeybaordKey(k),
+            KeyBoardKeySetter::Set(k) => MessageToPlayer::NewKeyboardKey(k),
+            KeyBoardKeySetter::Clear(k) => MessageToPlayer::ClearKeybaordKey(k),
         }
     }
 }
@@ -97,9 +98,7 @@ pub struct Player {
     /// The output audio port
     audio_mono_out: jack::Port<jack::AudioOut>,
     /// Listener to changes in the configuration
-    change_listener: Option<std::sync::mpsc::Sender<PlayerChange>>,
-    /// Listener to the external configuration changes
-    config_listener: Option<std::sync::mpsc::Receiver<ConfigurationChange>>,
+    change_listener: std::sync::mpsc::Sender<MessageToUI>,
     /// The keyboard configuration
     keyboard: HardWare,
     /// The velocity that was used to activate a note
@@ -110,7 +109,7 @@ pub struct Player {
     fade_out: Vec<f64>,
     config: Configuration,
     ///The channel allowing to receive external commands
-    external_commands: std::sync::mpsc::Receiver<ExternalPlayerInput>,
+    external_commands: std::sync::mpsc::Receiver<MessageToPlayer>,
     ///If true, the next control input should be used for mapping
     map_next_contrl: Option<KeyBoardKey>,
 }
@@ -118,7 +117,8 @@ pub struct Player {
 impl Player {
     pub fn new(
         client: &jack::Client,
-        extra_input: std::sync::mpsc::Receiver<ExternalPlayerInput>,
+        extra_input: std::sync::mpsc::Receiver<MessageToPlayer>,
+        channel_input: std::sync::mpsc::Sender<MessageToUI>,
     ) -> Result<Player, PlayerError> {
         let sample_rate = client.sample_rate();
 
@@ -148,8 +148,7 @@ impl Player {
             time: 0.0,
             midi_in: client.register_port("midi_input", jack::MidiIn::default())?,
             audio_mono_out: client.register_port("music_out", jack::AudioOut::default())?,
-            change_listener: None,
-            config_listener: None,
+            change_listener: channel_input,
             keyboard: midi_keyboard,
             velocity: velocity_array,
             play: play_array,
@@ -171,15 +170,9 @@ impl Player {
     }
 
     /// Send a notification to the change listener
-    fn send(
-        change_listener: &mut Option<std::sync::mpsc::Sender<PlayerChange>>,
-        to_send: PlayerChange,
-    ) {
-        if change_listener.is_some() {
-            match change_listener.as_mut().unwrap().send(to_send) {
-                Ok(()) => {}
-                Err(e) => println!("Error while trying to send the change value notification: {e}"),
-            }
+    fn send(change_listener: &mut std::sync::mpsc::Sender<MessageToUI>, to_send: MessageToUI) {
+        if let Err(e) = change_listener.send(to_send) {
+            eprintln!("Internal error: {e}");
         }
     }
 
@@ -206,38 +199,28 @@ impl Player {
     }
 
     fn read_input(&mut self, ps: &jack::ProcessScope) {
-        match &mut self.config_listener {
-            Some(config_changes) => {
-                while let Ok(m) = config_changes.try_recv() {
-                    self.config.apply_dont_send_notification(m)
-                }
-            }
-            None => {}
-        }
-
         match self.external_commands.try_recv() {
             Ok(v) => match v {
-                ExternalPlayerInput::NewKeyboardKey(k) => self.map_next_contrl = Some(k),
-                ExternalPlayerInput::ClearAllKeyboardKeys => self.keyboard.clear_all(),
-                ExternalPlayerInput::SaveConf => {
-                    match Self::save_keyboard_conf(&mut self.keyboard) {
-                        Ok(()) => {}
-                        Err(e) => {
-                            Self::send(&mut self.change_listener, PlayerChange::Error(e));
-                        }
+                MessageToPlayer::NewKeyboardKey(k) => self.map_next_contrl = Some(k),
+                MessageToPlayer::ClearAllKeyboardKeys => self.keyboard.clear_all(),
+                MessageToPlayer::SaveConf => match Self::save_keyboard_conf(&mut self.keyboard) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        Self::send(&mut self.change_listener, MessageToUI::Error(e));
                     }
-                }
-                ExternalPlayerInput::LoadConf => match Self::load_keyboard_conf() {
-                    Ok(kb) => self.keyboard = kb,
-                    Err(e) => Self::send(&mut self.change_listener, PlayerChange::Error(e)),
                 },
-                ExternalPlayerInput::ClearKeybaordKey(k) => self.keyboard.clear_key(k),
+                MessageToPlayer::LoadConf => match Self::load_keyboard_conf() {
+                    Ok(kb) => self.keyboard = kb,
+                    Err(e) => Self::send(&mut self.change_listener, MessageToUI::Error(e)),
+                },
+                MessageToPlayer::ClearKeybaordKey(k) => self.keyboard.clear_key(k),
+                MessageToPlayer::NewConfiguration(conf) => self.config = conf,
             },
             Err(e) => match e {
                 std::sync::mpsc::TryRecvError::Empty => {}
                 std::sync::mpsc::TryRecvError::Disconnected => Self::send(
                     &mut self.change_listener,
-                    PlayerChange::Error(PlayerError::CommunicationError(e)),
+                    MessageToUI::Error(PlayerError::CommunicationError(e)),
                 ),
             },
         };
@@ -280,39 +263,45 @@ impl Player {
                         let k = self.map_next_contrl.take().unwrap();
                         self.keyboard.update_key(k, control);
                     }
+                    let current_conf = self.config.clone();
                     match self.keyboard.get_keyboard_key(control) {
                         None => {}
                         Some(v) => match v {
                             KeyBoardKey::WaveSelection => {
                                 if value > 0 {
-                                    self.config.cycle_wave_type();
+                                    self.config.wave = self.config.wave.cycle();
                                 }
                             }
                             KeyBoardKey::Overtone(overtone_index) => {
                                 let new_value = (value as f64) * OVERTONE_STEP;
-                                self.config
-                                    .update_overtone(overtone_index as usize, new_value)
+                                self.config.overtone[overtone_index as usize] = new_value;
                             }
-                            KeyBoardKey::FadeInDuration => self
-                                .config
-                                .set_fade_in_duration(FADE_DURATION_STEP * (1.0 + value as f64)),
+                            KeyBoardKey::FadeInDuration => {
+                                self.config.fade_in_duration =
+                                    FADE_DURATION_STEP * (1.0 + value as f64)
+                            }
                             KeyBoardKey::FadeInShape => {
-                                self.config.set_fade_in_shape(Self::get_shape_factor(value));
+                                self.config.fade_in_shape = value;
                             }
                             KeyBoardKey::FadeOutDuration => {
                                 let new_duration = FADE_DURATION_STEP * (1.0 + value as f64);
-                                self.config.set_fade_out_duration(new_duration);
+                                self.config.fade_out_duration = new_duration;
                             }
                             KeyBoardKey::FadeOutShape => {
-                                self.config
-                                    .set_fade_out_shape(Self::get_shape_factor(value));
+                                self.config.fade_out_shape = value;
                             }
                             KeyBoardKey::Gain => {
                                 let new_gain = (1 + value) as f64 * GAIN_STEP;
-                                self.config.set_gain(new_gain)
+                                self.config.gain = new_gain;
                             }
                             _ => {}
                         },
+                    }
+                    if self.config != current_conf {
+                        Player::send(
+                            &mut self.change_listener,
+                            MessageToUI::NewConfiguration(self.config.clone()),
+                        )
                     }
                 }
                 MidiInput::PitchBend { value } => {
@@ -354,8 +343,9 @@ impl Player {
                     } else {
                         let prev = self.fade_in[note_index];
                         self.fade_in[note_index] +=
-                            Self::compute_increment(self.rate, self.config.fade_in_duration());
-                        prev.powf(self.config.in_shape_factor())
+                            Self::compute_increment(self.rate, self.config.fade_in_duration);
+                        let factor = Player::get_shape_factor(self.config.fade_in_shape);
+                        prev.powf(factor)
                     }
                 } else {
                     if self.fade_out[note_index] < 0.0 {
@@ -363,14 +353,15 @@ impl Player {
                     } else {
                         let prev = self.fade_out[note_index];
                         self.fade_out[note_index] -=
-                            Self::compute_increment(self.rate, self.config.fade_out_duration());
-                        prev.powf(self.config.out_shape_factor())
+                            Self::compute_increment(self.rate, self.config.fade_out_duration);
+                        let factor = Player::get_shape_factor(self.config.fade_out_shape);
+                        prev.powf(factor)
                     }
                 };
 
                 if fade > 0.0 {
-                    let overtones_freq = self.config.overtone_freq();
-                    let overtones_impact = self.config.overtone();
+                    let overtones_freq = &self.config.overtone_freq;
+                    let overtones_impact = &self.config.overtone;
                     for overtone_index in
                         0..std::cmp::min(overtones_freq.len(), overtones_impact.len())
                     {
@@ -380,14 +371,14 @@ impl Player {
                             * 2.0
                             * std::f64::consts::PI;
 
-                        let y = self.config.wave().compute(x);
+                        let y = self.config.wave.compute(x);
                         value +=
                             y * self.velocity[note_index] * overtones_impact[overtone_index] * fade;
                     }
                     mute = false;
                 }
             }
-            value *= self.config.gain();
+            value *= self.config.gain;
             *v = value as f32;
             self.time += self.frame_t * self.time_dilation_factor;
             if mute {
@@ -397,17 +388,6 @@ impl Player {
 
         // Continue as normal
         jack::Control::Continue
-    }
-
-    pub fn set_change_listener(
-        &mut self,
-        channel_input: std::sync::mpsc::Sender<PlayerChange>,
-        config_change_listener: std::sync::mpsc::Sender<ConfigurationChange>,
-        external_config_change: std::sync::mpsc::Receiver<ConfigurationChange>,
-    ) {
-        self.config.set_change_listener(config_change_listener);
-        self.change_listener = Some(channel_input);
-        self.config_listener = Some(external_config_change);
     }
 }
 
