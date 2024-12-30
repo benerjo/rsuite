@@ -13,6 +13,7 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
         * [Smooth](#smooth)
     * [Utils](#utils)
         * [Activator](#activator)
+        * [Metronome](#metronome)
         * [Recorder](#recorder)
         * [Transposer](#transposer)
 * [Project](#project)
