@@ -20,6 +20,8 @@ pub enum KeyBoardKey {
     Modulation,
     ModulationSpeed,
     ModulationIntensity,
+    Activate,
+    Tempo,
 }
 
 impl Display for KeyBoardKey {
@@ -41,6 +43,8 @@ impl Display for KeyBoardKey {
             KeyBoardKey::Modulation => write!(f, "Modulation"),
             KeyBoardKey::ModulationSpeed => write!(f, "Modulation Speed"),
             KeyBoardKey::ModulationIntensity => write!(f, "Modulation Intensity"),
+            KeyBoardKey::Activate => write!(f, "Activate"),
+            KeyBoardKey::Tempo => write!(f, "Tempo"),
         }
     }
 }

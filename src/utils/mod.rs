@@ -1,9 +1,11 @@
 mod activate;
+mod metronome;
 mod recorder;
 mod transposer;
 
 pub use activate::activator;
 use egui_plot::{Line, PlotPoints};
+pub use metronome::metronome;
 pub use recorder::record;
 pub use transposer::transposer;
 
@@ -155,6 +157,10 @@ pub fn common_menu_luncher(ui: &mut eframe::egui::Ui, messages: &mut Vec<String>
     ui.menu_button("Utils", |ui| {
         if ui.button("Activator").clicked() {
             start_command("activator", messages);
+            ui.close_menu();
+        }
+        if ui.button("Metronome").clicked() {
+            start_command("metronome", messages);
             ui.close_menu();
         }
         if ui.button("Recorder").clicked() {

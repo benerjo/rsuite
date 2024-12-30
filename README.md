@@ -94,6 +94,15 @@ This utility aims to either let midi command through or block them.
 The different elements that can be configured:
 * If the midi messages are going through or are blocked
 
+#### Metronome
+
+Provide a audio cue for the rythm
+
+The different elements that can be configured:
+* The number of quarters per bar
+* The number of quarters per minute
+* If the metronome is active
+
 #### Recorder
 
 This utility aims to record some audio output on a single channel
