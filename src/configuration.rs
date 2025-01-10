@@ -1,3 +1,5 @@
+use std::ops::RangeInclusive;
+
 use crate::{
     synth::{hardware::KeyBoardKey, wavetype::WaveType},
     utils::{create_keyboard_select, KeyBoardKeySetter},
@@ -20,13 +22,14 @@ impl FloatValueInRange {
     ///Create a new float value whithin a range
     pub fn new(
         value: f64,
-        range: std::ops::RangeInclusive<f64>,
+        range_start: f64,
+        range_end: f64,
         name: &str,
         key: KeyBoardKey,
     ) -> FloatValueInRange {
         FloatValueInRange {
             value,
-            range,
+            range: RangeInclusive::new(range_start, range_end),
             name: String::from(name),
             key,
         }
@@ -87,13 +90,14 @@ pub struct UsizeValueInRange {
 impl UsizeValueInRange {
     pub fn new(
         value: usize,
-        range: std::ops::RangeInclusive<usize>,
+        range_start: usize,
+        range_end: usize,
         name: &str,
         key: KeyBoardKey,
     ) -> UsizeValueInRange {
         UsizeValueInRange {
             value,
-            range,
+            range: RangeInclusive::new(range_start, range_end),
             name: String::from(name),
             key,
         }

@@ -36,39 +36,27 @@ impl Configuration {
     pub fn new(rate: usize) -> Configuration {
         Self {
             wave_type: WaveTypeValue::new("base wave", KeyBoardKey::WaveSelection),
-            attack: UsizeValueInRange::new(
-                50,
-                RangeInclusive::new(0, 128),
-                "attack",
-                KeyBoardKey::FadeInDuration,
-            ),
-            decay: UsizeValueInRange::new(
-                50,
-                RangeInclusive::new(0, 128),
-                "decay",
-                KeyBoardKey::FadeInDuration,
-            ),
+            attack: UsizeValueInRange::new(50, 0, 128, "attack", KeyBoardKey::FadeInDuration),
+            decay: UsizeValueInRange::new(50, 0, 128, "decay", KeyBoardKey::FadeInDuration),
             duration: UsizeValueInRange::new(
                 (rate as usize) / 20, //default duration: 0.05 sec
-                RangeInclusive::new(0, 2 * rate),
+                0,
+                2 * rate,
                 "duration",
                 KeyBoardKey::Duration,
             ),
-            volume: FloatValueInRange::new(
-                0.5,
-                RangeInclusive::new(0.0, 10.0),
-                "volume",
-                KeyBoardKey::Gain,
-            ),
+            volume: FloatValueInRange::new(0.5, 0.0, 10.0, "volume", KeyBoardKey::Gain),
             start_freq: FloatValueInRange::new(
                 350.0,
-                RangeInclusive::new(0.0, 8.0 * 440.0),
+                0.0,
+                8.0 * 440.0,
                 "start freq",
                 KeyBoardKey::Parameter,
             ),
             end_freq: FloatValueInRange::new(
                 16.0,
-                RangeInclusive::new(0.0, 8.0 * 440.0),
+                0.0,
+                8.0 * 440.0,
                 "end freq",
                 KeyBoardKey::Parameter,
             ),
