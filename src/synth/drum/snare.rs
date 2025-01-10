@@ -1,9 +1,8 @@
-use std::ops::RangeInclusive;
-
 use eframe::egui::{self, ViewportBuilder};
 use rand::random;
 
 use crate::{
+    configuration::{self, ConfigurationValue, FloatValueInRange, UsizeValueInRange},
     midiinput::MidiInput,
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType, KeyBoardKeySetter},
@@ -12,26 +11,44 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 struct Configuration {
     /// The number of frames needed to reach full volume
-    attack: usize,
+    attack: UsizeValueInRange,
     /// The number of frames to completely stop the sound
-    decay: usize,
+    decay: UsizeValueInRange,
     /// The duration of the snare, in frames
-    duration: usize,
+    duration: UsizeValueInRange,
     /// The volume of the snare
-    volume: f64,
+    volume: FloatValueInRange,
     /// The alpha value for the high pass filter
-    alpha: f64,
+    alpha: FloatValueInRange,
 }
 
 impl Configuration {
     pub fn new(rate: usize) -> Configuration {
         Self {
-            attack: 50,
-            decay: 50,
-            duration: (rate as usize) / 20, //default duration: 1 sec
-            volume: 0.5,
-            alpha: 0.2,
+            attack: UsizeValueInRange::new(50, 0, 128, "attack", KeyBoardKey::FadeInDuration),
+            decay: UsizeValueInRange::new(50, 0, 128, "decay", KeyBoardKey::FadeOutDuration),
+            duration: UsizeValueInRange::new(
+                rate / 20,
+                0,
+                rate * 5,
+                "duration",
+                KeyBoardKey::Duration,
+            ),
+            volume: FloatValueInRange::new(0.5, 0.0, 10.0, "volume", KeyBoardKey::Gain),
+            alpha: FloatValueInRange::new(0.2, 0.0, 1.0, "alpha", KeyBoardKey::Parameter),
         }
+    }
+}
+
+impl<'c> configuration::Configuration<'c> for Configuration {
+    fn elements(&'c mut self) -> Vec<ConfigurationValue<'c>> {
+        vec![
+            ConfigurationValue::USize(&mut self.attack),
+            ConfigurationValue::USize(&mut self.decay),
+            ConfigurationValue::USize(&mut self.duration),
+            ConfigurationValue::Float(&mut self.volume),
+            ConfigurationValue::Float(&mut self.alpha),
+        ]
     }
 }
 
@@ -128,7 +145,9 @@ impl jack::ProcessHandler for Snare {
             }
         }
 
-        let total_frames = self.conf.decay + self.conf.duration + self.conf.attack;
+        let total_frames = self.conf.decay.get_value()
+            + self.conf.duration.get_value()
+            + self.conf.attack.get_value();
 
         let show_p = self.midi_in.iter(ps);
         for e in show_p {
@@ -140,26 +159,7 @@ impl jack::ProcessHandler for Snare {
                     value,
                 } => {
                     if let Some(key) = self.keyboard.get_keyboard_key(control) {
-                        let send_update = match key {
-                            KeyBoardKey::FadeInDuration => {
-                                self.conf.attack = 10 * value as usize;
-                                true
-                            }
-                            KeyBoardKey::FadeOutDuration => {
-                                self.conf.decay = 10 * value as usize;
-                                true
-                            }
-                            KeyBoardKey::Gain => {
-                                self.conf.volume = value as f64 / 128.0;
-                                true
-                            }
-                            KeyBoardKey::Parameter => {
-                                self.conf.alpha = value as f64 / 128.0;
-                                true
-                            }
-                            _ => false,
-                        };
-                        if send_update {
+                        if configuration::Configuration::apply_midi(&mut self.conf, key, value) {
                             Self::send_message(
                                 MessageToSnareUI::NewConfig(self.conf.clone()),
                                 &mut self.messages_out,
@@ -207,22 +207,23 @@ impl jack::ProcessHandler for Snare {
                 if self.nb_frames_left[snare_index] == 0 {
                     continue;
                 }
-                let volume =
-                    if self.nb_frames_left[snare_index] > self.conf.decay + self.conf.duration {
-                        let v = total_frames - self.nb_frames_left[snare_index];
-                        (v as f64 / self.conf.attack as f64) * self.conf.volume
-                    } else if self.nb_frames_left[snare_index] > self.conf.decay {
-                        self.conf.volume
-                    } else {
-                        let v = self.nb_frames_left[snare_index];
-                        (v as f64 / self.conf.decay as f64) * self.conf.volume
-                    };
+                let volume = if self.nb_frames_left[snare_index]
+                    > self.conf.decay.get_value() + self.conf.duration.get_value()
+                {
+                    let v = total_frames - self.nb_frames_left[snare_index];
+                    (v as f64 / self.conf.attack.get_value() as f64) * self.conf.volume.get_value()
+                } else if self.nb_frames_left[snare_index] > self.conf.decay.get_value() {
+                    self.conf.volume.get_value()
+                } else {
+                    let v = self.nb_frames_left[snare_index];
+                    (v as f64 / self.conf.decay.get_value() as f64) * self.conf.volume.get_value()
+                };
 
                 assert!(total_frames >= self.nb_frames_left[snare_index]);
 
                 let x = 1.0 - (random::<f64>() * 2.0);
 
-                let y = self.conf.alpha
+                let y = self.conf.alpha.get_value()
                     * (self.last_output[snare_index] + x - self.last_input[snare_index]);
 
                 self.last_input[snare_index] = x;
@@ -286,13 +287,14 @@ impl SnareUI {
     fn create_menu(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("Settings", |ui| {
-                crate::utils::create_keyboard_select(
-                    ui,
-                    "Alpha",
-                    KeyBoardKey::Parameter,
-                    &mut self.message_out,
-                    &mut self.messages,
-                );
+                if let Some(conf) = &mut self.current_config {
+                    configuration::Configuration::create_menu_keyboard_settings(
+                        conf,
+                        ui,
+                        &mut self.message_out,
+                        &mut self.messages,
+                    );
+                }
             });
             crate::utils::common_menu_luncher(ui, &mut self.messages);
         });
@@ -302,40 +304,7 @@ impl SnareUI {
         if let Some(current_config) = &self.current_config {
             let mut conf = current_config.clone();
 
-            crate::utils::create_usize_slider(
-                ui,
-                "Duration",
-                &mut conf.duration,
-                std::ops::RangeInclusive::new(0usize, 44100usize),
-            );
-
-            crate::utils::create_f64_slider(
-                ui,
-                "Volume",
-                &mut conf.volume,
-                std::ops::RangeInclusive::new(0.0, 10.0),
-            );
-
-            crate::utils::create_f64_slider(
-                ui,
-                "Alpha",
-                &mut conf.alpha,
-                RangeInclusive::new(0.0, 1.0),
-            );
-
-            crate::utils::create_usize_slider(
-                ui,
-                "Fade in",
-                &mut conf.attack,
-                std::ops::RangeInclusive::new(0usize, 128usize),
-            );
-
-            crate::utils::create_usize_slider(
-                ui,
-                "Fade out",
-                &mut conf.decay,
-                std::ops::RangeInclusive::new(0usize, 128usize),
-            );
+            configuration::Configuration::draw(&mut conf, ui);
 
             if !self.current_config.as_ref().eq(&Some(&conf)) {
                 if let Err(e) = self
