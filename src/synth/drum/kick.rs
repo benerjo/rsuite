@@ -1,6 +1,11 @@
+use std::ops::RangeInclusive;
+
 use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
+    configuration::{
+        self, ConfigurationValue, FloatValueInRange, UsizeValueInRange, WaveTypeValue,
+    },
     midiinput::MidiInput,
     synth::{
         hardware::{HardWare, KeyBoardKey},
@@ -12,32 +17,76 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 struct Configuration {
     /// The number of frames needed to reach full volume
-    attack: usize,
+    attack: UsizeValueInRange,
     /// The number of frames to completely stop the sound
-    decay: usize,
+    decay: UsizeValueInRange,
     /// The duration of the kick, in frames
-    duration: usize,
+    duration: UsizeValueInRange,
     /// The volume of the kick
-    volume: f64,
+    volume: FloatValueInRange,
     /// The start frequency
-    start_freq: f64,
+    start_freq: FloatValueInRange,
     /// The end frequency
-    end_freq: f64,
+    end_freq: FloatValueInRange,
     /// The type of wave that we want to use
-    wave_type: WaveType,
+    wave_type: WaveTypeValue,
 }
 
 impl Configuration {
     pub fn new(rate: usize) -> Configuration {
         Self {
-            attack: 50,
-            decay: 50,
-            duration: (rate as usize) / 20, //default duration: 1 sec
-            volume: 0.5,
-            start_freq: 350.0,
-            end_freq: 16.0,
-            wave_type: WaveType::Sin,
+            wave_type: WaveTypeValue::new("base wave", KeyBoardKey::WaveSelection),
+            attack: UsizeValueInRange::new(
+                50,
+                RangeInclusive::new(0, 128),
+                "attack",
+                KeyBoardKey::FadeInDuration,
+            ),
+            decay: UsizeValueInRange::new(
+                50,
+                RangeInclusive::new(0, 128),
+                "decay",
+                KeyBoardKey::FadeInDuration,
+            ),
+            duration: UsizeValueInRange::new(
+                (rate as usize) / 20, //default duration: 0.05 sec
+                RangeInclusive::new(0, 2 * rate),
+                "duration",
+                KeyBoardKey::Duration,
+            ),
+            volume: FloatValueInRange::new(
+                0.5,
+                RangeInclusive::new(0.0, 10.0),
+                "volume",
+                KeyBoardKey::Gain,
+            ),
+            start_freq: FloatValueInRange::new(
+                350.0,
+                RangeInclusive::new(0.0, 8.0 * 440.0),
+                "start freq",
+                KeyBoardKey::Parameter,
+            ),
+            end_freq: FloatValueInRange::new(
+                16.0,
+                RangeInclusive::new(0.0, 8.0 * 440.0),
+                "end freq",
+                KeyBoardKey::Parameter,
+            ),
         }
+    }
+}
+
+impl<'c> configuration::Configuration<'c> for Configuration {
+    fn elements(&'c mut self) -> Vec<ConfigurationValue<'c>> {
+        vec![
+            ConfigurationValue::WaveType(&mut self.wave_type),
+            ConfigurationValue::USize(&mut self.duration),
+            ConfigurationValue::Float(&mut self.volume),
+            ConfigurationValue::Float(&mut self.start_freq),
+            ConfigurationValue::Float(&mut self.end_freq),
+            ConfigurationValue::USize(&mut self.attack),
+            ConfigurationValue::USize(&mut self.decay),
+        ]
     }
 }
 
@@ -129,7 +178,9 @@ impl jack::ProcessHandler for Kicker {
             }
         }
 
-        let total_frames = self.conf.decay + self.conf.duration + self.conf.attack;
+        let total_frames = self.conf.decay.get_value()
+            + self.conf.duration.get_value()
+            + self.conf.attack.get_value();
 
         let show_p = self.midi_in.iter(ps);
         for e in show_p {
@@ -141,26 +192,7 @@ impl jack::ProcessHandler for Kicker {
                     value,
                 } => {
                     if let Some(key) = self.keyboard.get_keyboard_key(control) {
-                        let send_update = match key {
-                            KeyBoardKey::WaveSelection => {
-                                self.conf.wave_type = self.conf.wave_type.cycle();
-                                true
-                            }
-                            KeyBoardKey::FadeInDuration => {
-                                self.conf.attack = 10 * value as usize;
-                                true
-                            }
-                            KeyBoardKey::FadeOutDuration => {
-                                self.conf.decay = 10 * value as usize;
-                                true
-                            }
-                            KeyBoardKey::Gain => {
-                                self.conf.volume = value as f64 / 128.0;
-                                true
-                            }
-                            _ => false,
-                        };
-                        if send_update {
+                        if configuration::Configuration::apply_midi(&mut self.conf, key, value) {
                             Self::send_message(
                                 MessageToKickerUI::NewConfig(self.conf.clone()),
                                 &mut self.messages_out,
@@ -208,16 +240,17 @@ impl jack::ProcessHandler for Kicker {
                 if self.nb_frames_left[kick_index] == 0 {
                     continue;
                 }
-                let volume =
-                    if self.nb_frames_left[kick_index] > self.conf.decay + self.conf.duration {
-                        let v = total_frames - self.nb_frames_left[kick_index];
-                        (v as f64 / self.conf.attack as f64) * self.conf.volume
-                    } else if self.nb_frames_left[kick_index] > self.conf.decay {
-                        self.conf.volume
-                    } else {
-                        let v = self.nb_frames_left[kick_index];
-                        (v as f64 / self.conf.decay as f64) * self.conf.volume
-                    };
+                let volume = if self.nb_frames_left[kick_index]
+                    > self.conf.decay.get_value() + self.conf.duration.get_value()
+                {
+                    let v = total_frames - self.nb_frames_left[kick_index];
+                    (v as f64 / self.conf.attack.get_value() as f64) * self.conf.volume.get_value()
+                } else if self.nb_frames_left[kick_index] > self.conf.decay.get_value() {
+                    self.conf.volume.get_value()
+                } else {
+                    let v = self.nb_frames_left[kick_index];
+                    (v as f64 / self.conf.decay.get_value() as f64) * self.conf.volume.get_value()
+                };
 
                 assert!(total_frames >= self.nb_frames_left[kick_index]);
                 let ellapsed_frames = total_frames - self.nb_frames_left[kick_index];
@@ -226,8 +259,9 @@ impl jack::ProcessHandler for Kicker {
                 let time = ellapsed_frames as f64 * self.frame_t;
                 let non_linear_param = f64::exp(-5.0 * fraction_passed);
                 assert!(non_linear_param < 1.00001 && non_linear_param > 0.0);
-                let freq = self.conf.end_freq
-                    + non_linear_param * (self.conf.start_freq - self.conf.end_freq);
+                let freq = self.conf.end_freq.get_value()
+                    + non_linear_param
+                        * (self.conf.start_freq.get_value() - self.conf.end_freq.get_value());
 
                 let x = freq * time * 2.0 * std::f64::consts::PI;
 
@@ -290,15 +324,16 @@ impl KickerUI {
 
     fn create_menu(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
-            ui.menu_button("Settings", |ui| {
-                crate::utils::create_keyboard_select(
-                    ui,
-                    "Wave type selection",
-                    KeyBoardKey::WaveSelection,
-                    &mut self.message_out,
-                    &mut self.messages,
-                );
-            });
+            if let Some(config) = &mut self.current_config {
+                ui.menu_button("Settings", |ui| {
+                    configuration::Configuration::create_menu_keyboard_settings(
+                        config,
+                        ui,
+                        &mut self.message_out,
+                        &mut self.messages,
+                    );
+                });
+            }
             crate::utils::common_menu_luncher(ui, &mut self.messages);
         });
     }
@@ -307,58 +342,7 @@ impl KickerUI {
         if let Some(current_config) = &self.current_config {
             let mut conf = current_config.clone();
 
-            ui.horizontal(|ui| {
-                ui.label("Wave type:");
-                if ui.button(format!("{}", conf.wave_type)).clicked() {
-                    conf.wave_type = conf.wave_type.cycle();
-                }
-            });
-            let line = crate::utils::create_plot_line(&conf.wave_type);
-            egui_plot::Plot::new(format!("Wave type: {}", conf.wave_type))
-                .view_aspect(21.0 / 9.0)
-                .show(ui, |plot_ui| plot_ui.line(line));
-
-            crate::utils::create_usize_slider(
-                ui,
-                "Duration",
-                &mut conf.duration,
-                std::ops::RangeInclusive::new(0usize, 44100usize),
-            );
-
-            crate::utils::create_f64_slider(
-                ui,
-                "Volume",
-                &mut conf.volume,
-                std::ops::RangeInclusive::new(0.0, 10.0),
-            );
-
-            crate::utils::create_f64_slider(
-                ui,
-                "Start Freq",
-                &mut conf.start_freq,
-                std::ops::RangeInclusive::new(0.0, 8.0 * 440.0),
-            );
-
-            crate::utils::create_f64_slider(
-                ui,
-                "End Freq",
-                &mut conf.end_freq,
-                std::ops::RangeInclusive::new(0.0, 350.0),
-            );
-
-            crate::utils::create_usize_slider(
-                ui,
-                "Fade in",
-                &mut conf.attack,
-                std::ops::RangeInclusive::new(0usize, 128usize),
-            );
-
-            crate::utils::create_usize_slider(
-                ui,
-                "Fade out",
-                &mut conf.decay,
-                std::ops::RangeInclusive::new(0usize, 128usize),
-            );
+            configuration::Configuration::draw(&mut conf, ui);
 
             if !self.current_config.as_ref().eq(&Some(&conf)) {
                 if let Err(e) = self

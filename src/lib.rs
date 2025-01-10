@@ -1,3 +1,4 @@
+pub mod configuration;
 pub mod effects;
 pub mod midiinput;
 pub mod synth;

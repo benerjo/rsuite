@@ -10,6 +10,7 @@ pub enum KeyBoardKey {
     FadeInShape,
     FadeOutDuration,
     FadeOutShape,
+    Duration,
     Gain,
     Record,
     Play,
@@ -17,6 +18,7 @@ pub enum KeyBoardKey {
     TransposeUp,
     TransposeDown,
     Parameter,
+    ParameterB,
     Modulation,
     ModulationSpeed,
     ModulationIntensity,
@@ -39,12 +41,14 @@ impl Display for KeyBoardKey {
             KeyBoardKey::Stop => write!(f, "Stop"),
             KeyBoardKey::TransposeUp => write!(f, "Transpose up half a step"),
             KeyBoardKey::TransposeDown => write!(f, "Transpose down half a step"),
-            KeyBoardKey::Parameter => write!(f, "Effect parameter"),
+            KeyBoardKey::Parameter => write!(f, "Effect parameter A"),
+            KeyBoardKey::ParameterB => write!(f, "Effect parameter B"),
             KeyBoardKey::Modulation => write!(f, "Modulation"),
             KeyBoardKey::ModulationSpeed => write!(f, "Modulation Speed"),
             KeyBoardKey::ModulationIntensity => write!(f, "Modulation Intensity"),
             KeyBoardKey::Activate => write!(f, "Activate"),
             KeyBoardKey::Tempo => write!(f, "Tempo"),
+            KeyBoardKey::Duration => write!(f, "Duration"),
         }
     }
 }
