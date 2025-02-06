@@ -1,42 +1,6 @@
 use eframe::egui::{self, ViewportBuilder};
 
-#[derive(Debug)]
-pub enum Connection {
-    MidiIn,
-    AudioIn,
-    AudioOut,
-}
-
-#[derive(Debug)]
-pub enum Error {
-    UnableToStartClient(jack::Error),
-    UnableToActivateTheClient(jack::Error),
-    UnableToDeActivateClient(jack::Error),
-    UnableToStartUserInterface(eframe::Error),
-    ConnectionError(Connection, jack::Error),
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::UnableToStartClient(e) => writeln!(f, "Unable to start the client: {e}"),
-            Error::UnableToDeActivateClient(e) => {
-                writeln!(f, "Unable to de-activate the client: {e}")
-            }
-            Error::UnableToStartUserInterface(e) => {
-                writeln!(f, "Unable to start the user interface: {e}")
-            }
-            Error::ConnectionError(c, e) => {
-                writeln!(f, "Error while performing connection to {:?}: {e}", c)
-            }
-            Error::UnableToActivateTheClient(e) => {
-                writeln!(f, "Unable to activate the client: {e}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
+use crate::utils::{CommonError, ConnectionType};
 
 ///Messages passed from the UI to the smooth
 enum SmoothMessages {
@@ -66,18 +30,18 @@ impl Smooth {
         alpha: f64,
         client: &jack::Client,
         messages: std::sync::mpsc::Receiver<SmoothMessages>,
-    ) -> Result<Smooth, Error> {
+    ) -> Result<Smooth, CommonError> {
         let m_in = match client.register_port("midi_input", jack::MidiIn::default()) {
             Ok(v) => v,
-            Err(e) => return Err(Error::ConnectionError(Connection::MidiIn, e)),
+            Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiIn, e)),
         };
         let a_in = match client.register_port("music_in", jack::AudioIn::default()) {
             Ok(v) => v,
-            Err(e) => return Err(Error::ConnectionError(Connection::AudioIn, e)),
+            Err(e) => return Err(CommonError::ConnectionError(ConnectionType::AudioIn, e)),
         };
         let a_out = match client.register_port("music_out", jack::AudioOut::default()) {
             Ok(v) => v,
-            Err(e) => return Err(Error::ConnectionError(Connection::AudioOut, e)),
+            Err(e) => return Err(CommonError::ConnectionError(ConnectionType::AudioOut, e)),
         };
         let a = if alpha < MIN_ALPHA {
             MIN_ALPHA
@@ -184,13 +148,13 @@ impl eframe::App for SmoothUI {
     }
 }
 
-pub fn smooth() -> Result<(), Error> {
+pub fn smooth() -> Result<(), CommonError> {
     // open client
     let (client, _status) = match jack::Client::new("smooth", jack::ClientOptions::NO_START_SERVER)
     {
         Ok(v) => v,
         Err(e) => {
-            return Err(Error::UnableToStartClient(e));
+            return Err(CommonError::UnableToStartClient(e));
         }
     };
 
@@ -200,7 +164,7 @@ pub fn smooth() -> Result<(), Error> {
     let synth = Smooth::new(ALPHA_DEFAULT, &client, rcv)?;
     let active_client = match client.activate_async((), synth) {
         Ok(client) => client,
-        Err(e) => return Err(Error::UnableToActivateTheClient(e)),
+        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
     };
 
     match eframe::run_native(
@@ -213,13 +177,13 @@ pub fn smooth() -> Result<(), Error> {
         Box::new(|cc| Ok(Box::new(SmoothUI::new(cc, send)))),
     ) {
         Ok(_) => {}
-        Err(e) => return Err(Error::UnableToStartUserInterface(e)),
+        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
     }
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),
         Err(e) => {
-            return Err(Error::UnableToDeActivateClient(e));
+            return Err(CommonError::UnableToDeActivateClient(e));
         }
     }
 }
