@@ -1,8 +1,7 @@
-use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display};
 
 ///This enum represent all the dials/button from the midi device
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Serialize, Deserialize, Copy)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub enum KeyBoardKey {
     WaveSelection,
     Overtone(u8),
@@ -53,7 +52,7 @@ impl Display for KeyBoardKey {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq)]
 pub struct HardWare {
     midi_keys_mapping: HashMap<u8, KeyBoardKey>,
     kb_keys_mapping: HashMap<KeyBoardKey, u8>,

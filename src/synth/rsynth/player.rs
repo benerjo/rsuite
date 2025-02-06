@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    io::{prelude::*, Write},
-};
+use std::fmt::Display;
 
 use crate::synth::{
     hardware::{HardWare, KeyBoardKey},
@@ -10,7 +7,6 @@ use crate::synth::{
 use crate::{midiinput::MidiInput, utils::KeyBoardKeySetter};
 
 pub const FADE_DURATION_STEP: f64 = 0.025;
-pub const MIDI_KEYBOARD_CONF_LOCATION: &str = "rsynth.ron";
 pub const GAIN_STEP: f64 = 8.0 / 127.0;
 pub const OVERTONE_STEP: f64 = 1.0 / 128.0;
 
@@ -45,8 +41,6 @@ pub enum PlayerError {
     JackError(jack::Error),
     FileError(std::io::Error),
     CommunicationError(std::sync::mpsc::TryRecvError),
-    RonError(ron::error::Error),
-    RonSpannedError(ron::error::SpannedError),
 }
 
 impl From<jack::Error> for PlayerError {
@@ -61,26 +55,12 @@ impl From<std::io::Error> for PlayerError {
     }
 }
 
-impl From<ron::error::Error> for PlayerError {
-    fn from(value: ron::error::Error) -> Self {
-        PlayerError::RonError(value)
-    }
-}
-
-impl From<ron::error::SpannedError> for PlayerError {
-    fn from(value: ron::error::SpannedError) -> Self {
-        PlayerError::RonSpannedError(value)
-    }
-}
-
 impl Display for PlayerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PlayerError::JackError(e) => write!(f, "{e}"),
             PlayerError::FileError(e) => write!(f, "{e}"),
             PlayerError::CommunicationError(e) => write!(f, "{e}"),
-            PlayerError::RonError(e) => write!(f, "{e}"),
-            PlayerError::RonSpannedError(e) => write!(f, "{e}"),
         }
     }
 }
@@ -187,18 +167,12 @@ impl Player {
         }
     }
 
-    fn save_keyboard_conf(keyboard: &HardWare) -> Result<(), PlayerError> {
-        let text = ron::to_string(&keyboard)?;
-        let mut f = std::fs::File::create(MIDI_KEYBOARD_CONF_LOCATION)?;
-        f.write_all(text.as_bytes())?;
-        Ok(())
+    fn save_keyboard_conf(_keyboard: &HardWare) -> Result<(), PlayerError> {
+        todo!("implement the saving of the keyboard configuration");
     }
 
     fn load_keyboard_conf() -> Result<HardWare, PlayerError> {
-        let mut f = std::fs::File::open(MIDI_KEYBOARD_CONF_LOCATION)?;
-        let mut buffer = String::new();
-        f.read_to_string(&mut buffer)?;
-        Ok(ron::from_str(&buffer)?)
+        todo!("implement the loading of the keyboard configuration");
     }
 
     fn read_input(&mut self, ps: &jack::ProcessScope) {
