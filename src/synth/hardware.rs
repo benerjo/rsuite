@@ -52,6 +52,8 @@ impl Display for KeyBoardKey {
     }
 }
 
+///The hardware structure is used to abstract
+/// the midi control message and map them to a KeyBoardKey value
 #[derive(Debug, PartialEq)]
 pub struct HardWare {
     midi_keys_mapping: HashMap<u8, KeyBoardKey>,
@@ -92,6 +94,7 @@ impl Default for HardWare {
 }
 
 impl HardWare {
+    ///Create a new representation of Hardware
     pub fn new() -> Self {
         Self {
             midi_keys_mapping: HashMap::new(),
@@ -99,6 +102,7 @@ impl HardWare {
         }
     }
 
+    ///Retreive the KeyBoardKey represented by the given midi control
     pub fn get_keyboard_key(&self, midi_control: u8) -> Option<KeyBoardKey> {
         match self.midi_keys_mapping.get(&midi_control) {
             Some(k) => Some(k.clone()),
@@ -106,11 +110,13 @@ impl HardWare {
         }
     }
 
+    ///Clear all mapping
     pub fn clear_all(&mut self) {
         self.midi_keys_mapping.clear();
         self.kb_keys_mapping.clear();
     }
 
+    ///Clear the mapping between a key and it's midi control representation
     pub fn clear_key(&mut self, key: KeyBoardKey) {
         match self.kb_keys_mapping.get(&key) {
             Some(v) => {
@@ -121,6 +127,7 @@ impl HardWare {
         self.kb_keys_mapping.remove_entry(&key);
     }
 
+    ///Specify the midi control key that should be mapped to a given keyboard key
     pub fn update_key(&mut self, key: KeyBoardKey, midi_key: u8) {
         match self.kb_keys_mapping.get(&key) {
             Some(midi_key) => {
