@@ -41,6 +41,7 @@ pub enum PlayerError {
     JackError(jack::Error),
     FileError(std::io::Error),
     CommunicationError(std::sync::mpsc::TryRecvError),
+    NotYetImplemented,
 }
 
 impl From<jack::Error> for PlayerError {
@@ -61,6 +62,7 @@ impl Display for PlayerError {
             PlayerError::JackError(e) => write!(f, "{e}"),
             PlayerError::FileError(e) => write!(f, "{e}"),
             PlayerError::CommunicationError(e) => write!(f, "{e}"),
+            PlayerError::NotYetImplemented => write!(f, "Functionality not yet present"),
         }
     }
 }
@@ -168,11 +170,11 @@ impl Player {
     }
 
     fn save_keyboard_conf(_keyboard: &HardWare) -> Result<(), PlayerError> {
-        todo!("implement the saving of the keyboard configuration");
+        Err(PlayerError::NotYetImplemented)
     }
 
     fn load_keyboard_conf() -> Result<HardWare, PlayerError> {
-        todo!("implement the loading of the keyboard configuration");
+        Err(PlayerError::NotYetImplemented)
     }
 
     fn read_input(&mut self, ps: &jack::ProcessScope) {
