@@ -23,14 +23,14 @@ struct Configuration {
 }
 
 impl Configuration {
-    pub fn new(rate: usize) -> Configuration {
+    pub fn new(rate: u32) -> Configuration {
         Self {
             attack: UsizeValueInRange::new(50, 0, 128, "attack", KeyBoardKey::FadeInDuration),
             decay: UsizeValueInRange::new(50, 0, 128, "decay", KeyBoardKey::FadeOutDuration),
             duration: UsizeValueInRange::new(
-                rate / 20,
+                rate as usize / 20,
                 0,
-                rate * 5,
+                rate as usize * 5,
                 "duration",
                 KeyBoardKey::Duration,
             ),

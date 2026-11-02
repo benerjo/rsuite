@@ -39,7 +39,7 @@ impl Recorder {
         messages_in: std::sync::mpsc::Receiver<MessageToRecorder>,
         messages_out: std::sync::mpsc::Sender<MessageToRecorderUI>,
     ) -> Result<Recorder, CommonError> {
-        let sample_rate = client.sample_rate();
+        let sample_rate = client.sample_rate() as usize;
         let a_in = match client.register_port("music_in", jack::AudioIn::default()) {
             Ok(v) => v,
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::AudioIn, e)),

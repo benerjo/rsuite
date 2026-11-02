@@ -124,7 +124,7 @@ impl Player {
         };
 
         Ok(Player {
-            rate: sample_rate,
+            rate: sample_rate as usize,
             frame_t: 1.0 / sample_rate as f64,
             time_dilation_factor: 1.0,
             time: 0.0,

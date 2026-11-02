@@ -31,7 +31,7 @@ struct Configuration {
 }
 
 impl Configuration {
-    pub fn new(rate: usize) -> Configuration {
+    pub fn new(rate: u32) -> Configuration {
         Self {
             wave_type: WaveTypeValue::new("base wave", KeyBoardKey::WaveSelection),
             attack: UsizeValueInRange::new(50, 0, 128, "attack", KeyBoardKey::FadeInDuration),
@@ -39,7 +39,7 @@ impl Configuration {
             duration: UsizeValueInRange::new(
                 (rate as usize) / 20, //default duration: 0.05 sec
                 0,
-                2 * rate,
+                2 * rate as usize,
                 "duration",
                 KeyBoardKey::Duration,
             ),

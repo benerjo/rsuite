@@ -73,6 +73,8 @@ impl Metronome {
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiIn, e)),
         };
 
+        let sample_rate = client.sample_rate() as usize;
+
         Ok(Metronome {
             configuration: MetronomeConfiguration::default(),
             keyboard: HardWare::new(),
@@ -80,10 +82,10 @@ impl Metronome {
             audio_mono_out: a_out,
             messages_in,
             messages_out,
-            rate: client.sample_rate(),
+            rate: sample_rate,
             time: 0,
-            sound_left: client.sample_rate() / 10,
-            sound_duration: client.sample_rate() / 10,
+            sound_left: sample_rate / 10,
+            sound_duration: sample_rate / 10,
             beat_nb: 0,
             next_key_map: None,
         })
