@@ -299,6 +299,10 @@ impl Player {
                         self.time_dilation_factor = 1.0 + (value - 64) as f64 / 64.0
                     }
                 }
+                MidiInput::Clock { timing: _ }
+                | MidiInput::Start { timing: _ }
+                | MidiInput::Continue { timing: _ }
+                | MidiInput::Stop { timing: _ } => {}
                 MidiInput::Unknown {
                     d1: _,
                     d2: _,

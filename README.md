@@ -99,6 +99,8 @@ The different elements that can be configured:
 
 Provide a audio cue for the rythm
 
+It also sends the midi clock on its midi output: the clock runs continuously, and the start/stop messages follow the activation of the metronome.
+
 The different elements that can be configured:
 * The number of quarters per bar
 * The number of quarters per minute

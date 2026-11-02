@@ -2,6 +2,11 @@ use std::convert::From;
 
 const MAX_MIDI: usize = 3;
 
+const CLOCK: u8 = 0xF8;
+const START: u8 = 0xFA;
+const CONTINUE: u8 = 0xFB;
+const STOP: u8 = 0xFC;
+
 #[derive(Clone, PartialEq)]
 pub enum MidiInput {
     NoteStart {
@@ -23,6 +28,22 @@ pub enum MidiInput {
     },
     PitchBend {
         value: u8,
+    },
+    /// Timing clock, sent 24 times per quarter note
+    Clock {
+        timing: jack::Frames,
+    },
+    /// Start the sequence from the beginning
+    Start {
+        timing: jack::Frames,
+    },
+    /// Resume the sequence from where it was stopped
+    Continue {
+        timing: jack::Frames,
+    },
+    /// Stop the sequence
+    Stop {
+        timing: jack::Frames,
     },
     Unknown {
         d1: u8,
@@ -105,6 +126,34 @@ impl MidiInput {
                 bytes[2] = *value;
                 jack::RawMidi { time: 0, bytes }
             }
+            MidiInput::Clock { timing } => {
+                bytes[0] = CLOCK;
+                jack::RawMidi {
+                    time: *timing,
+                    bytes: &bytes[..1],
+                }
+            }
+            MidiInput::Start { timing } => {
+                bytes[0] = START;
+                jack::RawMidi {
+                    time: *timing,
+                    bytes: &bytes[..1],
+                }
+            }
+            MidiInput::Continue { timing } => {
+                bytes[0] = CONTINUE;
+                jack::RawMidi {
+                    time: *timing,
+                    bytes: &bytes[..1],
+                }
+            }
+            MidiInput::Stop { timing } => {
+                bytes[0] = STOP;
+                jack::RawMidi {
+                    time: *timing,
+                    bytes: &bytes[..1],
+                }
+            }
             MidiInput::Unknown { d1, d2, d3 } => {
                 bytes[0] = *d1;
                 bytes[1] = *d2;
@@ -164,6 +213,18 @@ impl std::fmt::Debug for MidiInput {
             MidiInput::PitchBend { value } => {
                 write!(f, "Pitch bend {{ {} }}", value)
             }
+            MidiInput::Clock { timing } => {
+                write!(f, "Clock {{ timing: {} }}", timing)
+            }
+            MidiInput::Start { timing } => {
+                write!(f, "Start {{ timing: {} }}", timing)
+            }
+            MidiInput::Continue { timing } => {
+                write!(f, "Continue {{ timing: {} }}", timing)
+            }
+            MidiInput::Stop { timing } => {
+                write!(f, "Stop {{ timing: {} }}", timing)
+            }
             MidiInput::Unknown { d1, d2, d3 } => {
                 write!(f, "Unknown {{ d1: {}, d2: {}, d3: {} }}", d1, d2, d3)
             }
@@ -204,6 +265,14 @@ impl From<jack::RawMidi<'_>> for MidiInput {
             MidiInput::PitchBend {
                 value: midi.bytes[2],
             }
+        } else if header_byte == CLOCK {
+            MidiInput::Clock { timing: midi.time }
+        } else if header_byte == START {
+            MidiInput::Start { timing: midi.time }
+        } else if header_byte == CONTINUE {
+            MidiInput::Continue { timing: midi.time }
+        } else if header_byte == STOP {
+            MidiInput::Stop { timing: midi.time }
         } else {
             MidiInput::Unknown {
                 d1: if len > 0 { midi.bytes[0] } else { 0 as u8 },
@@ -219,6 +288,29 @@ mod test {
     use jack::RawMidi;
 
     use super::MidiInput;
+
+    #[test]
+    fn realtime_messages() {
+        let messages = [
+            (0xF8, MidiInput::Clock { timing: 42 }),
+            (0xFA, MidiInput::Start { timing: 42 }),
+            (0xFB, MidiInput::Continue { timing: 42 }),
+            (0xFC, MidiInput::Stop { timing: 42 }),
+        ];
+        for (byte, expected) in messages {
+            let d = [byte];
+            let input = MidiInput::from(RawMidi {
+                time: 42,
+                bytes: &d,
+            });
+            assert_eq!(input, expected);
+
+            let mut filled_bytes = vec![0; 3];
+            let raw = input.to_raw(&mut filled_bytes);
+            assert_eq!(raw.time, 42);
+            assert_eq!(raw.bytes, &[byte]);
+        }
+    }
 
     #[test]
     fn midi_to_raw() {

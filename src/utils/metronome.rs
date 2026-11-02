@@ -12,6 +12,9 @@ use crate::{
 
 use super::{CommonError, ConnectionType, KeyBoardKeySetter};
 
+///The number of midi clock messages per quarter note
+const CLOCKS_PER_QUARTER: usize = 24;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MetronomeConfiguration {
     ///The number of quarters per minutes
@@ -38,6 +41,8 @@ struct Metronome {
     keyboard: HardWare,
     /// The midi input to activate the metronome
     midi_in: jack::Port<jack::MidiIn>,
+    /// The midi output sending the clock and the start/stop messages
+    midi_out: jack::Port<jack::MidiOut>,
     /// The output audio port
     audio_mono_out: jack::Port<jack::AudioOut>,
     ///The incoming messages from the UI
@@ -46,12 +51,18 @@ struct Metronome {
     messages_out: std::sync::mpsc::Sender<MessageToMetronomeUI>,
     ///The audio rate (number of audio frames per seconds)
     rate: usize,
-    ///The number of frames passed since the start of the first beat
-    time: usize,
+    ///The number of frames left before the next clock message
+    frames_to_next_clock: f64,
+    ///The position of the next clock message in the current quarter note
+    clock_nb: usize,
+    ///If the start message was sent without being followed by a stop message
+    running: bool,
     ///Duration left of the sound
     sound_left: usize,
     ///The duration of a sound
     sound_duration: usize,
+    ///The frequency of the current sound
+    sound_frequency: f64,
     /// The beat number
     beat_nb: usize,
     /// The next key to map
@@ -72,6 +83,10 @@ impl Metronome {
             Ok(v) => v,
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiIn, e)),
         };
+        let m_out = match client.register_port("midi_out", jack::MidiOut::default()) {
+            Ok(v) => v,
+            Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiOut, e)),
+        };
 
         let sample_rate = client.sample_rate() as usize;
 
@@ -79,16 +94,27 @@ impl Metronome {
             configuration: MetronomeConfiguration::default(),
             keyboard: HardWare::new(),
             midi_in: m_in,
+            midi_out: m_out,
             audio_mono_out: a_out,
             messages_in,
             messages_out,
             rate: sample_rate,
-            time: 0,
-            sound_left: sample_rate / 10,
+            frames_to_next_clock: 0.0,
+            clock_nb: 0,
+            running: false,
+            sound_left: 0,
             sound_duration: sample_rate / 10,
+            sound_frequency: 0.0,
             beat_nb: 0,
             next_key_map: None,
         })
+    }
+
+    fn send_midi(writer: &mut jack::MidiWriter, message: MidiInput) {
+        let mut bytes = [0; 3];
+        if let Err(e) = writer.write(&message.to_raw(&mut bytes)) {
+            eprintln!("Internal error: {e}");
+        }
     }
 }
 
@@ -137,43 +163,56 @@ impl jack::ProcessHandler for Metronome {
             }
         }
 
+        let mut midi_out = self.midi_out.writer(ps);
+
+        if self.configuration.active != self.running {
+            self.running = self.configuration.active;
+            if self.running {
+                Metronome::send_midi(&mut midi_out, MidiInput::Start { timing: 0 });
+                //the clock following a start message is the first beat of the bar
+                self.frames_to_next_clock = 0.0;
+                self.clock_nb = 0;
+                self.beat_nb = 0;
+            } else {
+                Metronome::send_midi(&mut midi_out, MidiInput::Stop { timing: 0 });
+            }
+        }
+
         // Get output buffer
         let out = self.audio_mono_out.as_mut_slice(ps);
 
         // Write output
-        for v in out.iter_mut() {
+        for (frame, v) in out.iter_mut().enumerate() {
+            if self.frames_to_next_clock <= 0.0 {
+                Metronome::send_midi(
+                    &mut midi_out,
+                    MidiInput::Clock {
+                        timing: frame as jack::Frames,
+                    },
+                );
+                if self.clock_nb == 0 {
+                    self.sound_left = self.sound_duration;
+                    self.sound_frequency = if self.beat_nb == 0 { 880.0 } else { 220.0 };
+                    self.beat_nb = (self.beat_nb + 1) % self.configuration.nb_notes;
+                }
+                self.clock_nb = (self.clock_nb + 1) % CLOCKS_PER_QUARTER;
+                self.frames_to_next_clock += (self.rate * 60) as f64
+                    / (self.configuration.bpm * CLOCKS_PER_QUARTER) as f64;
+            }
+            self.frames_to_next_clock -= 1.0;
+
             let amplitude = if self.sound_left > 0 {
                 let fade = if self.sound_left > self.sound_duration / 2 {
                     (self.sound_duration as f64) - (self.sound_left as f64)
                 } else {
                     self.sound_left as f64
                 };
-                let result = if self.time + self.sound_left <= self.sound_duration {
-                    //first beat
-                    let t = (self.time as f64) / (self.rate as f64);
-                    fade * WaveType::Sin.compute(880.0 * t * 2.0 * std::f64::consts::PI)
-                } else {
-                    let t = (self.sound_duration - self.sound_left) as f64 / (self.rate as f64);
-                    fade * WaveType::Sin.compute(220.0 * t * 2.0 * std::f64::consts::PI)
-                };
-                self.time += 1;
-                if self.sound_left > 0 {
-                    self.sound_left -= 1;
-                }
+                let t = (self.sound_duration - self.sound_left) as f64 / (self.rate as f64);
+                let result = fade
+                    * WaveType::Sin.compute(self.sound_frequency * t * 2.0 * std::f64::consts::PI);
+                self.sound_left -= 1;
                 result
             } else {
-                if self.time % (self.rate * 60 / self.configuration.bpm) == 0 {
-                    self.sound_left = self.sound_duration;
-                    self.beat_nb = (self.beat_nb + 1) % self.configuration.nb_notes;
-                    if self.beat_nb == 0 {
-                        self.time = 0;
-                    } else {
-                        self.time += 1;
-                    }
-                } else {
-                    self.time += 1;
-                }
-
                 0.0
             };
 
