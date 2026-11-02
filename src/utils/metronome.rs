@@ -196,8 +196,8 @@ impl jack::ProcessHandler for Metronome {
                     self.beat_nb = (self.beat_nb + 1) % self.configuration.nb_notes;
                 }
                 self.clock_nb = (self.clock_nb + 1) % CLOCKS_PER_QUARTER;
-                self.frames_to_next_clock += (self.rate * 60) as f64
-                    / (self.configuration.bpm * CLOCKS_PER_QUARTER) as f64;
+                self.frames_to_next_clock +=
+                    (self.rate * 60) as f64 / (self.configuration.bpm * CLOCKS_PER_QUARTER) as f64;
             }
             self.frames_to_next_clock -= 1.0;
 

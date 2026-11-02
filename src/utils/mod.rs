@@ -149,6 +149,14 @@ pub fn common_menu_luncher(ui: &mut eframe::egui::Ui, messages: &mut Vec<String>
         }
     });
     ui.menu_button("Effects", |ui| {
+        if ui.button("Chorus").clicked() {
+            start_command("chorus", messages);
+            ui.close_menu();
+        }
+        if ui.button("Distortion").clicked() {
+            start_command("distortion", messages);
+            ui.close_menu();
+        }
         if ui.button("Smooth").clicked() {
             start_command("smooth", messages);
             ui.close_menu();

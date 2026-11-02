@@ -24,6 +24,12 @@ path = "src/bin/rsynth.rs"
 name = "mididebug"
 path = "src/bin/mididebug.rs"
 [[bin]]
+name = "chorus"
+path = "src/bin/chorus.rs"
+[[bin]]
+name = "distortion"
+path = "src/bin/distortion.rs"
+[[bin]]
 name = "smooth"
 path = "src/bin/smooth.rs"
 [[bin]]

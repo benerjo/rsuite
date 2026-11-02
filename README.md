@@ -10,6 +10,8 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
         * [RSynth](#rsynth)
         * [Snare](#snare)
     * [Effects](#effects)
+        * [Chorus](#chorus)
+        * [Distortion](#distortion)
         * [Smooth](#smooth)
     * [Utils](#utils)
         * [Activator](#activator)
@@ -71,6 +73,28 @@ WIP
 ### Effects
 
 A collection of effects on audio streams
+
+#### Chorus
+
+Mix the audio signal with delayed copies of itself (the voices) to make it sound thicker.
+The delay of each voice slowly moves up and down, and the voices are evenly spread over this movement.
+
+The different elements that can be configured:
+* Delay: the shortest delay of a voice, in milliseconds
+* Depth: the amount of time added to the delay by the modulation, in milliseconds
+* Speed: the speed of the modulation, in hertz
+* Voices: the number of delayed copies of the signal. Without voice, only the input signal is heard
+* Mix: the proportion of delayed signal in the output, between 0 and 1
+
+#### Distortion
+
+Amplify the audio signal and clip it smoothly, which adds harmonics to the sound.
+A low pass filter is then applied to tame the highest harmonics.
+
+The different elements that can be configured:
+* Drive: the amount of amplification before the signal is clipped
+* Tone: the cutoff frequency of the low pass filter, in hertz. At 0, no sound goes through
+* Volume: the volume of the output, between 0 and 1
 
 #### Smooth
 
