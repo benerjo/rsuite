@@ -15,6 +15,7 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
         * [Smooth](#smooth)
     * [Utils](#utils)
         * [Activator](#activator)
+        * [Loop](#loop)
         * [Metronome](#metronome)
         * [Recorder](#recorder)
         * [Transposer](#transposer)
@@ -118,6 +119,21 @@ This utility aims to either let midi command through or block them.
 
 The different elements that can be configured:
 * If the midi messages are going through or are blocked
+
+#### Loop
+
+Record the midi commands received during a given number of bars and replay them until the loop is de-activated.
+
+It has two midi inputs: the first one (clock_in) should be connected to the midi output of the metronome and the second one (midi_in) receives the midi commands to record.
+The midi output only contains the loop. To hear what is played during the recording, also connect the source of the midi commands to the instrument.
+
+Once activated, the recording starts at the beginning of the next bar. The stored loop is forgotten when de-activating.
+Stopping the metronome silences the loop, starting it again replays the loop from its beginning.
+
+The different elements that can be configured:
+* If the loop is active
+* The number of bars of the loop
+* The number of quarters per bar. It should be the same as in the metronome
 
 #### Metronome
 

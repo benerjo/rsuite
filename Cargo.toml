@@ -42,6 +42,9 @@ path = "src/bin/kick.rs"
 name = "transposer"
 path = "src/bin/transposer.rs"
 [[bin]]
+name = "loop"
+path = "src/bin/loop.rs"
+[[bin]]
 name = "metronome"
 path = "src/bin/metronome.rs"
 
