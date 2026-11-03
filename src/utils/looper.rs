@@ -2,7 +2,7 @@ use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
     configuration::{self, ConfigurationValue, UsizeValueInRange},
-    midiinput::MidiInput,
+    midiinput::{MidiInput, CHANNEL_MASK, NOTE_END, NOTE_START, STATUS_MASK},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{create_keyboard_select, CommonError, ConnectionType, KeyBoardKeySetter},
 };
@@ -99,11 +99,11 @@ fn note_change(bytes: &[u8]) -> Option<(usize, usize, bool)> {
     if bytes.len() < 3 {
         return None;
     }
-    let channel = (bytes[0] & 0x0F) as usize;
+    let channel = (bytes[0] & CHANNEL_MASK) as usize;
     let note = (bytes[1] & 0x7F) as usize;
-    match bytes[0] & 0xF0 {
-        0x90 => Some((channel, note, bytes[2] > 0)),
-        0x80 => Some((channel, note, false)),
+    match bytes[0] & STATUS_MASK {
+        NOTE_START => Some((channel, note, bytes[2] > 0)),
+        NOTE_END => Some((channel, note, false)),
         _ => None,
     }
 }
@@ -355,7 +355,7 @@ impl Looper {
                     self.held[channel][note] = false;
                     self.events.push(LoopEvent {
                         position,
-                        bytes: [0x80 | channel as u8, note as u8, 0],
+                        bytes: [NOTE_END | channel as u8, note as u8, 0],
                         len: MAX_EVENT_LEN,
                     });
                 }
@@ -372,7 +372,7 @@ impl Looper {
             for note in 0..self.sounding[channel].len() {
                 if self.sounding[channel][note] {
                     self.sounding[channel][note] = false;
-                    output(frame, &[0x80 | channel as u8, note as u8, 0]);
+                    output(frame, &[NOTE_END | channel as u8, note as u8, 0]);
                 }
             }
         }

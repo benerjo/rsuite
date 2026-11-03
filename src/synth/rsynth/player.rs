@@ -302,7 +302,10 @@ impl Player {
                 MidiInput::Clock { timing: _ }
                 | MidiInput::Start { timing: _ }
                 | MidiInput::Continue { timing: _ }
-                | MidiInput::Stop { timing: _ } => {}
+                | MidiInput::Stop { timing: _ }
+                | MidiInput::SysEx { timing: _, data: _ }
+                | MidiInput::BarMarker { .. }
+                | MidiInput::TimeSignature { .. } => {}
                 MidiInput::Unknown {
                     d1: _,
                     d2: _,
