@@ -32,6 +32,8 @@ const TIME_SIGNATURE_DELAYED: u8 = 0x42;
 /// numerator/denominator pairs
 const TIME_SIGNATURE_LEN: u8 = 4;
 
+///Device id of the universal messages sent to every device
+pub const ALL_DEVICES: u8 = 0x7F;
 ///Value of a bar marker when the sequence is not running
 pub const BAR_NOT_RUNNING: i16 = -8192;
 ///Value of a bar marker when the sequence is running but the bar number is unknown

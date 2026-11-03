@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
-    midiinput::MidiInput,
+    midiinput::{MidiInput, ALL_DEVICES, BAR_NOT_RUNNING, BAR_UNKNOWN},
     synth::{
         hardware::{HardWare, KeyBoardKey},
         wavetype::WaveType,
@@ -14,6 +14,8 @@ use super::{CommonError, ConnectionType, KeyBoardKeySetter};
 
 ///The number of midi clock messages per quarter note
 const CLOCKS_PER_QUARTER: usize = 24;
+///The length of the longest midi message sent by the metronome (the time signature)
+const MAX_MESSAGE_LEN: usize = 11;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MetronomeConfiguration {
@@ -65,6 +67,10 @@ struct Metronome {
     sound_frequency: f64,
     /// The beat number
     beat_nb: usize,
+    /// The number of the next bar, starting from 1
+    bar_nb: i16,
+    /// The number of quarters per bar of the last time signature sent
+    time_signature_sent: Option<usize>,
     /// The next key to map
     next_key_map: Option<KeyBoardKey>,
 }
@@ -106,12 +112,14 @@ impl Metronome {
             sound_duration: sample_rate / 10,
             sound_frequency: 0.0,
             beat_nb: 0,
+            bar_nb: 1,
+            time_signature_sent: None,
             next_key_map: None,
         })
     }
 
     fn send_midi(writer: &mut jack::MidiWriter, message: MidiInput) {
-        let mut bytes = [0; 3];
+        let mut bytes = [0; MAX_MESSAGE_LEN];
         if let Err(e) = writer.write(&message.to_raw(&mut bytes)) {
             eprintln!("Internal error: {e}");
         }
@@ -173,9 +181,38 @@ impl jack::ProcessHandler for Metronome {
                 self.frames_to_next_clock = 0.0;
                 self.clock_nb = 0;
                 self.beat_nb = 0;
+                self.bar_nb = 1;
+                self.time_signature_sent = None;
             } else {
                 Metronome::send_midi(&mut midi_out, MidiInput::Stop { timing: 0 });
+                Metronome::send_midi(
+                    &mut midi_out,
+                    MidiInput::BarMarker {
+                        timing: 0,
+                        device_id: ALL_DEVICES,
+                        bar: BAR_NOT_RUNNING,
+                    },
+                );
             }
+        }
+
+        //the time signature is sent when starting and whenever it changes
+        let nb_notes = self.configuration.nb_notes;
+        if self.running && self.time_signature_sent != Some(nb_notes) {
+            Metronome::send_midi(
+                &mut midi_out,
+                MidiInput::TimeSignature {
+                    timing: 0,
+                    device_id: ALL_DEVICES,
+                    delayed: false,
+                    numerator: nb_notes as u8,
+                    //quarter notes
+                    denominator_power: 2,
+                    clocks_per_click: CLOCKS_PER_QUARTER as u8,
+                    thirty_seconds_per_quarter: 8,
+                },
+            );
+            self.time_signature_sent = Some(nb_notes);
         }
 
         // Get output buffer
@@ -184,6 +221,19 @@ impl jack::ProcessHandler for Metronome {
         // Write output
         for (frame, v) in out.iter_mut().enumerate() {
             if self.frames_to_next_clock <= 0.0 {
+                //the bar marker comes right before the first clock of the bar
+                if self.running && self.clock_nb == 0 && self.beat_nb == 0 {
+                    Metronome::send_midi(
+                        &mut midi_out,
+                        MidiInput::BarMarker {
+                            timing: frame as jack::Frames,
+                            device_id: ALL_DEVICES,
+                            bar: self.bar_nb,
+                        },
+                    );
+                    //once the bar number cannot be represented, it is sent as unknown
+                    self.bar_nb = (self.bar_nb + 1).min(BAR_UNKNOWN);
+                }
                 Metronome::send_midi(
                     &mut midi_out,
                     MidiInput::Clock {
@@ -399,7 +449,7 @@ pub fn metronome() -> Result<(), CommonError> {
     };
 
     match eframe::run_native(
-        "Recorder",
+        "Metronome",
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,

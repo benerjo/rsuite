@@ -117,6 +117,16 @@ impl UsizeValueInRange {
         self.value
     }
 
+    ///Change the value. If the value is outside of the range, nothing changes.
+    /// True is returned if the value changed
+    pub fn set_value(&mut self, value: usize) -> bool {
+        if !self.range.contains(&value) || value == self.value {
+            return false;
+        }
+        self.value = value;
+        true
+    }
+
     fn get_keyboard_key(&self) -> KeyBoardKey {
         self.key
     }

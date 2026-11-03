@@ -2,7 +2,7 @@ use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
     configuration::{self, ConfigurationValue, UsizeValueInRange},
-    midiinput::{MidiInput, CHANNEL_MASK, NOTE_END, NOTE_START, STATUS_MASK},
+    midiinput::{MidiInput, BAR_NOT_RUNNING, CHANNEL_MASK, NOTE_END, NOTE_START, STATUS_MASK},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{create_keyboard_select, CommonError, ConnectionType, KeyBoardKeySetter},
 };
@@ -69,6 +69,12 @@ enum LoopState {
     Recording,
     ///The stored midi commands are being replayed
     Playing,
+    ///The stored midi commands are being replayed until the end of the loop, without repeating it
+    Stopping,
+    ///The stored midi commands are kept but not replayed
+    Stopped,
+    ///The replay will start again from the beginning of the loop with the next bar
+    WaitingToPlay,
 }
 
 impl std::fmt::Display for LoopState {
@@ -78,6 +84,33 @@ impl std::fmt::Display for LoopState {
             LoopState::Waiting => write!(f, "Waiting for the next bar"),
             LoopState::Recording => write!(f, "Recording"),
             LoopState::Playing => write!(f, "Playing"),
+            LoopState::Stopping => write!(f, "Stopping at the end of the loop"),
+            LoopState::Stopped => write!(f, "Stopped"),
+            LoopState::WaitingToPlay => write!(f, "Playing from the next bar"),
+        }
+    }
+}
+
+///The commands controlling the replay of a recorded loop
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayCommand {
+    ///Start the replay from the beginning of the loop with the next bar,
+    /// or keep repeating the loop if it was stopping
+    Play,
+    ///Finish the current replay of the loop without repeating it
+    Stop,
+    ///Stop the replay immediately
+    Break,
+}
+
+impl ReplayCommand {
+    ///Retrieve the command associated with a keyboard key
+    fn from_key(key: KeyBoardKey) -> Option<ReplayCommand> {
+        match key {
+            KeyBoardKey::Play => Some(ReplayCommand::Play),
+            KeyBoardKey::Stop => Some(ReplayCommand::Stop),
+            KeyBoardKey::Break => Some(ReplayCommand::Break),
+            _ => None,
         }
     }
 }
@@ -91,6 +124,21 @@ struct LoopEvent {
     bytes: [u8; MAX_EVENT_LEN],
     /// The number of meaningful bytes
     len: usize,
+}
+
+///Retrieve the number of quarter notes per bar of a time signature.
+/// None is returned if a bar does not contain a whole number of quarter notes
+fn quarters_per_bar(numerator: u8, denominator_power: u8) -> Option<usize> {
+    //a whole note lasts 4 quarters
+    let clocks =
+        (numerator as usize * 4 * CLOCKS_PER_QUARTER).checked_shr(denominator_power as u32)?;
+    if clocks == 0
+        || clocks % CLOCKS_PER_QUARTER != 0
+        || (clocks << denominator_power) != numerator as usize * 4 * CLOCKS_PER_QUARTER
+    {
+        return None;
+    }
+    Some(clocks / CLOCKS_PER_QUARTER)
 }
 
 ///Retrieve the channel and the note of a midi command starting or stopping a note.
@@ -174,6 +222,29 @@ impl Looper {
         }
     }
 
+    ///Control the replay of a recorded loop. Commands that do not apply to the current
+    /// state are ignored
+    fn on_command<F>(&mut self, command: ReplayCommand, frame: u64, output: &mut F)
+    where
+        F: FnMut(u64, &[u8]),
+    {
+        match (command, self.state) {
+            (ReplayCommand::Play, LoopState::Stopped) => self.state = LoopState::WaitingToPlay,
+            (ReplayCommand::Play, LoopState::Stopping) => self.state = LoopState::Playing,
+            (ReplayCommand::Stop, LoopState::Playing) => self.state = LoopState::Stopping,
+            (ReplayCommand::Stop | ReplayCommand::Break, LoopState::WaitingToPlay) => {
+                self.state = LoopState::Stopped
+            }
+            (ReplayCommand::Break, LoopState::Playing | LoopState::Stopping) => {
+                self.play(frame, output);
+                self.stop_sounding_notes(frame, output);
+                self.restart_pending = false;
+                self.state = LoopState::Stopped;
+            }
+            _ => {}
+        }
+    }
+
     ///Handle a start message: the next clock message is the first of the first bar
     fn on_start<F>(&mut self, frame: u64, output: &mut F)
     where
@@ -184,11 +255,18 @@ impl Looper {
         self.transport_position = 0;
         match self.state {
             LoopState::Recording => self.state = LoopState::Waiting,
-            LoopState::Playing => {
+            LoopState::Playing | LoopState::Stopping => {
                 self.stop_sounding_notes(frame, output);
                 self.restart_pending = true;
             }
             _ => {}
+        }
+    }
+
+    ///Handle a bar marker: the next clock message is the first of a bar
+    fn on_bar_marker(&mut self, bar: i16) {
+        if bar != BAR_NOT_RUNNING {
+            self.transport_position = 0;
         }
     }
 
@@ -206,7 +284,7 @@ impl Looper {
         self.running = false;
         match self.state {
             LoopState::Recording => self.state = LoopState::Waiting,
-            LoopState::Playing => self.stop_sounding_notes(frame, output),
+            LoopState::Playing | LoopState::Stopping => self.stop_sounding_notes(frame, output),
             _ => {}
         }
     }
@@ -218,7 +296,7 @@ impl Looper {
     {
         if self.running {
             match self.state {
-                LoopState::Inactive => {}
+                LoopState::Inactive | LoopState::Stopped => {}
                 LoopState::Waiting => {
                     if self.transport_position % conf.clocks_per_bar() == 0 {
                         self.events.clear();
@@ -226,6 +304,13 @@ impl Looper {
                         self.loop_clocks = conf.clocks_per_loop();
                         self.loop_position = 0;
                         self.state = LoopState::Recording;
+                    }
+                }
+                LoopState::WaitingToPlay => {
+                    if self.transport_position % conf.clocks_per_bar() == 0 {
+                        self.loop_position = 0;
+                        self.next_event = 0;
+                        self.state = LoopState::Playing;
                     }
                 }
                 LoopState::Recording => {
@@ -237,7 +322,7 @@ impl Looper {
                         self.state = LoopState::Playing;
                     }
                 }
-                LoopState::Playing => {
+                LoopState::Playing | LoopState::Stopping => {
                     if self.restart_pending {
                         self.restart_pending = false;
                         self.loop_position = 0;
@@ -248,6 +333,10 @@ impl Looper {
                         if self.loop_position == self.loop_clocks {
                             self.loop_position = 0;
                             self.next_event = 0;
+                            if self.state == LoopState::Stopping {
+                                self.stop_sounding_notes(frame, output);
+                                self.state = LoopState::Stopped;
+                            }
                         }
                     }
                 }
@@ -296,7 +385,8 @@ impl Looper {
     where
         F: FnMut(u64, &[u8]),
     {
-        if self.state != LoopState::Playing || !self.running || self.restart_pending {
+        let playing = matches!(self.state, LoopState::Playing | LoopState::Stopping);
+        if !playing || !self.running || self.restart_pending {
             return;
         }
         let last_clock_frame = match self.last_clock_frame {
@@ -400,6 +490,8 @@ struct Loop {
     looper: Looper,
     /// The number of frames processed since the start of the program
     frames_elapsed: u64,
+    /// The number of quarters per bar of a time signature that applies from the next bar
+    pending_quarters: Option<usize>,
 }
 
 impl Loop {
@@ -440,7 +532,19 @@ impl Loop {
             conf: current_config,
             looper: Looper::new(),
             frames_elapsed: 0,
+            pending_quarters: None,
         })
+    }
+
+    ///Use the number of quarters per bar given by a time signature
+    fn apply_quarters(
+        conf: &mut Configuration,
+        quarters: usize,
+        messages_out: &mut std::sync::mpsc::Sender<MessageToLoopUI>,
+    ) {
+        if conf.nb_quarters.set_value(quarters) {
+            Self::send_message(MessageToLoopUI::NewConfig(conf.clone()), messages_out);
+        }
     }
 
     fn send_message(
@@ -475,6 +579,9 @@ impl jack::ProcessHandler for Loop {
                 MessageToLoop::Active(active) => {
                     self.looper.set_active(active, first_frame, &mut output)
                 }
+                MessageToLoop::Replay(command) => {
+                    self.looper.on_command(command, first_frame, &mut output)
+                }
                 MessageToLoop::ChangeMidiKey(key) => self.key_change = Some(key),
                 MessageToLoop::ClearMidiKey(key) => self.keyboard.clear_key(key),
                 MessageToLoop::NewConfig(configuration) => self.conf = configuration,
@@ -506,6 +613,30 @@ impl jack::ProcessHandler for Loop {
                     MidiInput::Start { timing: _ } => self.looper.on_start(frame, &mut output),
                     MidiInput::Continue { timing: _ } => self.looper.on_continue(),
                     MidiInput::Stop { timing: _ } => self.looper.on_stop(frame, &mut output),
+                    MidiInput::BarMarker { bar, .. } => {
+                        if let Some(quarters) = self.pending_quarters.take() {
+                            Self::apply_quarters(&mut self.conf, quarters, &mut self.messages_out);
+                        }
+                        self.looper.on_bar_marker(bar);
+                    }
+                    MidiInput::TimeSignature {
+                        delayed,
+                        numerator,
+                        denominator_power,
+                        ..
+                    } => {
+                        if let Some(quarters) = quarters_per_bar(numerator, denominator_power) {
+                            if delayed {
+                                self.pending_quarters = Some(quarters);
+                            } else {
+                                Self::apply_quarters(
+                                    &mut self.conf,
+                                    quarters,
+                                    &mut self.messages_out,
+                                );
+                            }
+                        }
+                    }
                     _ => {}
                 }
             } else {
@@ -531,6 +662,10 @@ impl jack::ProcessHandler for Loop {
                             if value > 0 {
                                 let active = self.looper.state == LoopState::Inactive;
                                 self.looper.set_active(active, frame, &mut output);
+                            }
+                        } else if let Some(command) = ReplayCommand::from_key(key) {
+                            if value > 0 {
+                                self.looper.on_command(command, frame, &mut output);
                             }
                         } else if configuration::Configuration::apply_midi(
                             &mut self.conf,
@@ -568,6 +703,7 @@ impl jack::ProcessHandler for Loop {
 #[derive(Debug)]
 enum MessageToLoop {
     Active(bool),
+    Replay(ReplayCommand),
     ChangeMidiKey(KeyBoardKey),
     ClearMidiKey(KeyBoardKey),
     NewConfig(Configuration),
@@ -621,6 +757,19 @@ impl LoopUI {
                     &mut self.message_out,
                     &mut self.messages,
                 );
+                for (name, key) in [
+                    ("Keyboard play key", KeyBoardKey::Play),
+                    ("Keyboard stop key", KeyBoardKey::Stop),
+                    ("Keyboard break key", KeyBoardKey::Break),
+                ] {
+                    create_keyboard_select(
+                        ui,
+                        name,
+                        key,
+                        &mut self.message_out,
+                        &mut self.messages,
+                    );
+                }
                 if let Some(conf) = &mut self.current_config {
                     configuration::Configuration::create_menu_keyboard_settings(
                         conf,
@@ -644,6 +793,37 @@ impl LoopUI {
                 self.messages.push(format!("Internal error: {e}"));
             }
         }
+        //only the commands that apply to the current state are enabled
+        let state = self.state;
+        let commands = [
+            (
+                "Play",
+                ReplayCommand::Play,
+                matches!(state, LoopState::Stopped | LoopState::Stopping),
+            ),
+            (
+                "Stop",
+                ReplayCommand::Stop,
+                matches!(state, LoopState::Playing | LoopState::WaitingToPlay),
+            ),
+            (
+                "Break",
+                ReplayCommand::Break,
+                matches!(
+                    state,
+                    LoopState::Playing | LoopState::Stopping | LoopState::WaitingToPlay
+                ),
+            ),
+        ];
+        ui.horizontal(|ui| {
+            for (name, command, enabled) in commands {
+                if ui.add_enabled(enabled, egui::Button::new(name)).clicked() {
+                    if let Err(e) = self.message_out.send(MessageToLoop::Replay(command)) {
+                        self.messages.push(format!("Internal error: {e}"));
+                    }
+                }
+            }
+        });
         ui.label(format!("Status: {}", self.state));
 
         if let Some(current_config) = &self.current_config {
@@ -743,7 +923,10 @@ pub fn looper() -> Result<(), CommonError> {
 
 #[cfg(test)]
 mod test {
-    use super::{Configuration, LoopState, Looper, CLOCKS_PER_QUARTER};
+    use super::{
+        quarters_per_bar, Configuration, LoopState, Looper, ReplayCommand, CLOCKS_PER_QUARTER,
+    };
+    use crate::midiinput::{BAR_NOT_RUNNING, BAR_UNKNOWN};
     use crate::{configuration::UsizeValueInRange, synth::hardware::KeyBoardKey};
 
     ///The number of frames between two clock messages
@@ -818,6 +1001,221 @@ mod test {
         assert_eq!(looper.state, LoopState::Waiting);
         clocks(&mut looper, 24..25, &mut sent);
         assert_eq!(looper.state, LoopState::Recording);
+    }
+
+    #[test]
+    fn bar_marker_gives_the_first_beat() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        clocks(&mut looper, 0..5, &mut sent);
+        activate(&mut looper);
+        assert_eq!(looper.state, LoopState::Waiting);
+        looper.on_bar_marker(3);
+        clocks(&mut looper, 5..6, &mut sent);
+        assert_eq!(looper.state, LoopState::Recording);
+    }
+
+    #[test]
+    fn unknown_bar_number_still_gives_the_first_beat() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        clocks(&mut looper, 0..5, &mut sent);
+        activate(&mut looper);
+        looper.on_bar_marker(BAR_UNKNOWN);
+        clocks(&mut looper, 5..6, &mut sent);
+        assert_eq!(looper.state, LoopState::Recording);
+    }
+
+    #[test]
+    fn stopped_bar_marker_is_ignored() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        clocks(&mut looper, 0..5, &mut sent);
+        activate(&mut looper);
+        looper.on_bar_marker(BAR_NOT_RUNNING);
+        clocks(&mut looper, 5..6, &mut sent);
+        assert_eq!(looper.state, LoopState::Waiting);
+    }
+
+    #[test]
+    fn time_signatures_in_quarters() {
+        assert_eq!(quarters_per_bar(4, 2), Some(4));
+        assert_eq!(quarters_per_bar(3, 2), Some(3));
+        assert_eq!(quarters_per_bar(6, 3), Some(3));
+        assert_eq!(quarters_per_bar(2, 1), Some(4));
+        assert_eq!(quarters_per_bar(7, 3), None);
+        assert_eq!(quarters_per_bar(5, 4), None);
+        assert_eq!(quarters_per_bar(0, 2), None);
+        assert_eq!(quarters_per_bar(4, 100), None);
+    }
+
+    fn command(looper: &mut Looper, command: ReplayCommand, frame: u64, sent: &mut Sent) {
+        looper.on_command(command, frame, &mut |f, bytes: &[u8]| {
+            sent.push((f, bytes.to_vec()))
+        });
+    }
+
+    #[test]
+    fn break_silences_and_keeps_the_loop() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..27, &mut sent);
+        play(&mut looper, 2670, &mut sent);
+        command(&mut looper, ReplayCommand::Break, 2670, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopped);
+        assert_eq!(
+            sent,
+            vec![(2650, NOTE_ON.to_vec()), (2670, NOTE_OFF.to_vec())]
+        );
+
+        clocks(&mut looper, 27..100, &mut sent);
+        play(&mut looper, 100 * PERIOD, &mut sent);
+        assert_eq!(sent.len(), 2);
+        assert!(!looper.events.is_empty());
+    }
+
+    #[test]
+    fn stop_finishes_the_loop_without_repeating_it() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..27, &mut sent);
+        play(&mut looper, 2670, &mut sent);
+        command(&mut looper, ReplayCommand::Stop, 2670, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopping);
+        assert_eq!(sent, vec![(2650, NOTE_ON.to_vec())]);
+
+        clocks(&mut looper, 27..48, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopping);
+        clocks(&mut looper, 48..100, &mut sent);
+        play(&mut looper, 100 * PERIOD, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopped);
+        assert_eq!(
+            sent,
+            vec![(2650, NOTE_ON.to_vec()), (2850, NOTE_OFF.to_vec())]
+        );
+    }
+
+    #[test]
+    fn stop_ends_the_notes_held_until_the_end_of_the_loop() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        activate(&mut looper);
+        clocks(&mut looper, 0..3, &mut sent);
+        looper.on_midi(250, &NOTE_ON);
+        clocks(&mut looper, 3..27, &mut sent);
+        play(&mut looper, 2700, &mut sent);
+        command(&mut looper, ReplayCommand::Stop, 2700, &mut sent);
+        clocks(&mut looper, 27..100, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopped);
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1].1, NOTE_OFF.to_vec());
+        assert!(sent[1].0 <= 4800);
+    }
+
+    #[test]
+    fn play_cancels_the_stop() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..27, &mut sent);
+        command(&mut looper, ReplayCommand::Stop, 2700, &mut sent);
+        command(&mut looper, ReplayCommand::Play, 2700, &mut sent);
+        assert_eq!(looper.state, LoopState::Playing);
+        clocks(&mut looper, 27..51, &mut sent);
+        play(&mut looper, 51 * PERIOD, &mut sent);
+        assert_eq!(
+            sent,
+            vec![
+                (2650, NOTE_ON.to_vec()),
+                (2850, NOTE_OFF.to_vec()),
+                (5050, NOTE_ON.to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn break_while_stopping() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..27, &mut sent);
+        play(&mut looper, 2670, &mut sent);
+        command(&mut looper, ReplayCommand::Stop, 2670, &mut sent);
+        command(&mut looper, ReplayCommand::Break, 2680, &mut sent);
+        assert_eq!(looper.state, LoopState::Stopped);
+        assert_eq!(sent[1], (2680, NOTE_OFF.to_vec()));
+        clocks(&mut looper, 27..100, &mut sent);
+        assert_eq!(sent.len(), 2);
+    }
+
+    #[test]
+    fn replay_starts_again_with_the_next_bar() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..27, &mut sent);
+        command(&mut looper, ReplayCommand::Break, 2700, &mut sent);
+        clocks(&mut looper, 27..40, &mut sent);
+        sent.clear();
+
+        command(&mut looper, ReplayCommand::Play, 4000, &mut sent);
+        assert_eq!(looper.state, LoopState::WaitingToPlay);
+        clocks(&mut looper, 40..48, &mut sent);
+        play(&mut looper, 48 * PERIOD, &mut sent);
+        assert!(sent.is_empty());
+
+        clocks(&mut looper, 48..51, &mut sent);
+        play(&mut looper, 51 * PERIOD, &mut sent);
+        assert_eq!(looper.state, LoopState::Playing);
+        assert_eq!(sent, vec![(5050, NOTE_ON.to_vec())]);
+    }
+
+    #[test]
+    fn stop_or_break_before_the_replay_starts_again() {
+        for cancel in [ReplayCommand::Stop, ReplayCommand::Break] {
+            let mut looper = Looper::new();
+            let mut sent = Vec::new();
+            record_note(&mut looper, &mut sent);
+            clocks(&mut looper, 24..25, &mut sent);
+            command(&mut looper, ReplayCommand::Break, 2400, &mut sent);
+            command(&mut looper, ReplayCommand::Play, 2400, &mut sent);
+            command(&mut looper, cancel, 2400, &mut sent);
+            clocks(&mut looper, 25..100, &mut sent);
+            assert_eq!(looper.state, LoopState::Stopped);
+            assert!(sent.is_empty());
+        }
+    }
+
+    #[test]
+    fn commands_are_ignored_without_loop() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        command(&mut looper, ReplayCommand::Play, 0, &mut sent);
+        assert_eq!(looper.state, LoopState::Inactive);
+        activate(&mut looper);
+        clocks(&mut looper, 0..3, &mut sent);
+        for c in [
+            ReplayCommand::Stop,
+            ReplayCommand::Break,
+            ReplayCommand::Play,
+        ] {
+            command(&mut looper, c, 300, &mut sent);
+            assert_eq!(looper.state, LoopState::Recording);
+        }
+    }
+
+    #[test]
+    fn de_activation_forgets_a_stopped_loop() {
+        let mut looper = Looper::new();
+        let mut sent = Vec::new();
+        record_note(&mut looper, &mut sent);
+        clocks(&mut looper, 24..25, &mut sent);
+        command(&mut looper, ReplayCommand::Break, 2400, &mut sent);
+        looper.set_active(false, 2400, &mut |_, _: &[u8]| panic!("unexpected output"));
+        assert_eq!(looper.state, LoopState::Inactive);
+        assert!(looper.events.is_empty());
     }
 
     #[test]

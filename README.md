@@ -127,19 +127,28 @@ Record the midi commands received during a given number of bars and replay them 
 It has two midi inputs: the first one (clock_in) should be connected to the midi output of the metronome and the second one (midi_in) receives the midi commands to record.
 The midi output only contains the loop. To hear what is played during the recording, also connect the source of the midi commands to the instrument.
 
-Once activated, the recording starts at the beginning of the next bar. The stored loop is forgotten when de-activating.
+Once activated, the recording starts at the beginning of the next bar, so a loop always starts with the first beat of a bar.
+The beginning of the bars is given by the bar markers and the number of quarters per bar by the time signature, both sent by the metronome.
+The stored loop is forgotten when de-activating.
+
+Once recorded, the replay of the loop is controlled without recording a new loop:
+* Play: starts the replay again with the next bar, from the beginning of the loop. While stopping, it keeps repeating the loop instead
+* Stop: finishes the current replay of the loop, without repeating it
+* Break: stops the replay immediately
 Stopping the metronome silences the loop, starting it again replays the loop from its beginning.
 
 The different elements that can be configured:
 * If the loop is active
+* If the recorded loop is replayed, stopped or interrupted (play/stop/break)
 * The number of bars of the loop
-* The number of quarters per bar. It should be the same as in the metronome
+* The number of quarters per bar. It is updated by the time signature received from the metronome
 
 #### Metronome
 
 Provide a audio cue for the rythm
 
 It also sends the midi clock on its midi output: the clock runs continuously, and the start/stop messages follow the activation of the metronome.
+While active, it also sends the time signature (when starting and whenever the number of quarters per bar changes) and a bar marker at the start of every bar.
 
 The different elements that can be configured:
 * The number of quarters per bar
