@@ -60,6 +60,11 @@ impl Configuration {
             ),
         }
     }
+
+    ///Retrieve the total number of frames of a kick
+    fn total_frames(&self) -> usize {
+        self.decay.get_value() + self.duration.get_value() + self.attack.get_value()
+    }
 }
 
 impl<'c> configuration::Configuration<'c> for Configuration {
@@ -164,9 +169,7 @@ impl jack::ProcessHandler for Kicker {
             }
         }
 
-        let total_frames = self.conf.decay.get_value()
-            + self.conf.duration.get_value()
-            + self.conf.attack.get_value();
+        let total_frames = self.conf.total_frames();
 
         let show_p = self.midi_in.iter(ps);
         for e in show_p {
@@ -213,6 +216,12 @@ impl jack::ProcessHandler for Kicker {
                 }
                 _ => {}
             }
+        }
+
+        //the configuration may have been shortened while kicks were playing
+        let total_frames = self.conf.total_frames();
+        for frames_left in self.nb_frames_left.iter_mut() {
+            *frames_left = (*frames_left).min(total_frames);
         }
 
         let out = self.audio_out.as_mut_slice(ps);
