@@ -1,4 +1,4 @@
-use rsuite::midiinput::MidiInput;
+use rsuite::{midiinput::MidiInput, nsm};
 
 #[derive(Clone, Debug)]
 struct RawMidiCopy {
@@ -21,9 +21,9 @@ impl<'d> From<&jack::RawMidi<'d>> for RawMidiCopy {
 }
 
 fn main() {
-    // open client
-    let (client, _status) =
-        jack::Client::new("midi_debug", jack::ClientOptions::NO_START_SERVER).unwrap();
+    // join the session manager, if any, and open client
+    let session = nsm::Session::start("MIDI debug").unwrap();
+    let client = session.client("midi_debug").unwrap();
 
     //create a sync channel to send back copies of midi messages we get
     let (sender, receiver) = std::sync::mpsc::sync_channel(64);
@@ -51,8 +51,8 @@ fn main() {
     };
 
     // activate
-    let active_client = client
-        .activate_async((), jack::contrib::ClosureProcessHandler::new(cback))
+    let active_client = session
+        .activate_stateless(client, jack::contrib::ClosureProcessHandler::new(cback))
         .unwrap();
 
     //spawn a non-real-time thread that prints out the midi messages we get
@@ -63,9 +63,14 @@ fn main() {
     });
 
     // wait
-    println!("Press any key to quit");
-    let mut user_input = String::new();
-    std::io::stdin().read_line(&mut user_input).ok();
+    if nsm::is_session_managed() {
+        //there is no terminal: the session manager tells when to quit
+        nsm::wait_for_quit();
+    } else {
+        println!("Press any key to quit");
+        let mut user_input = String::new();
+        std::io::stdin().read_line(&mut user_input).ok();
+    }
 
     // optional deactivation
     active_client.deactivate().unwrap();

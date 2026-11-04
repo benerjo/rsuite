@@ -19,6 +19,7 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
         * [Metronome](#metronome)
         * [Recorder](#recorder)
         * [Transposer](#transposer)
+    * [Session management](#session-management)
 * [Project](#project)
 
 
@@ -157,11 +158,25 @@ The different elements that can be configured:
 
 #### Recorder
 
-This utility aims to record some audio output on a single channel
+This utility aims to record some audio output on a single channel.
+When it is used in a session, the audio files are written in the directory of the session.
 
 #### Transposer
 
 This utility transposes every midi note-on by a given number of half-step
+
+### Session management
+
+Every program can be managed by the [New Session Manager](https://new-session-manager.jackaudio.org/) (NSM), or by any other session manager implementing its protocol.
+When started by a session manager, a program:
+* uses the JACK client name chosen by the session manager, so that the connections can be restored
+* restores its state when it starts and saves it when the session is saved. The state contains every parameter that can be configured and the midi controls that are mapped to them
+* quits when the session is closed
+
+The state is written in the file 'state.conf', in the directory of the program inside the session.
+The recorded loop of the Loop utility is not part of the state.
+
+Without session manager, nothing is saved and the programs behave as usual.
 
 
 # Project

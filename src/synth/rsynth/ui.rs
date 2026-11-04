@@ -5,12 +5,15 @@ use std::{
     sync::mpsc::{Receiver, Sender},
 };
 
-use crate::synth::{
-    hardware::KeyBoardKey,
-    rsynth::{
-        configuration::Configuration,
-        player::{
-            MessageToPlayer, MessageToUI, Player, FADE_DURATION_STEP, GAIN_STEP, OVERTONE_STEP,
+use crate::{
+    nsm,
+    synth::{
+        hardware::KeyBoardKey,
+        rsynth::{
+            configuration::Configuration,
+            player::{
+                MessageToPlayer, MessageToUI, Player, FADE_DURATION_STEP, GAIN_STEP, OVERTONE_STEP,
+            },
         },
     },
 };
@@ -27,15 +30,17 @@ pub struct RustySynth<'c> {
 
 impl<'c> RustySynth<'c> {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         rcv: Receiver<MessageToUI>,
         send: Sender<MessageToPlayer>,
         client: &'c jack::Client,
+        configuration: Configuration,
     ) -> Self {
+        nsm::set_ui_context(&cc.egui_ctx);
         return Self {
             receiver: rcv,
             commands: send,
-            configuration: Configuration::new(),
+            configuration,
             messages: Vec::new(),
             used_keys: vec![
                 KeyBoardKey::WaveSelection,
@@ -79,14 +84,17 @@ impl<'c> RustySynth<'c> {
 
     fn create_menu(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("Save Configuration").clicked() {
-                    todo!()
-                }
-                if ui.button("Load Configuration").clicked() {
-                    todo!()
-                }
-            });
+            //when a session manager is used, it is in charge of saving the configuration
+            if !nsm::is_session_managed() {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Save Configuration").clicked() {
+                        todo!()
+                    }
+                    if ui.button("Load Configuration").clicked() {
+                        todo!()
+                    }
+                });
+            }
             ui.menu_button("Settings", |ui| {
                 ui.menu_button("KeyBoard", |ui| {
                     for k in &self.used_keys {

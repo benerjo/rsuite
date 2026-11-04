@@ -28,6 +28,7 @@ pub enum CommonError {
     UnableToDeActivateClient(jack::Error),
     UnableToStartUserInterface(eframe::Error),
     ConnectionError(ConnectionType, jack::Error),
+    SessionError(String),
 }
 
 impl std::fmt::Display for CommonError {
@@ -46,7 +47,14 @@ impl std::fmt::Display for CommonError {
             CommonError::UnableToActivateTheClient(e) => {
                 writeln!(f, "Unable to activate the client: {e}")
             }
+            CommonError::SessionError(e) => writeln!(f, "Session manager error: {e}"),
         }
+    }
+}
+
+impl From<eframe::Error> for CommonError {
+    fn from(value: eframe::Error) -> Self {
+        CommonError::UnableToStartUserInterface(value)
     }
 }
 

@@ -1,6 +1,9 @@
 use eframe::egui::{self, ViewportBuilder};
 
-use crate::utils::{CommonError, ConnectionType};
+use crate::{
+    nsm::{self, Persistent, Session, Stateful, Values},
+    utils::{CommonError, ConnectionType},
+};
 
 ///Messages passed from the UI to the smooth
 enum SmoothMessages {
@@ -62,6 +65,30 @@ impl Smooth {
     }
 }
 
+///The state saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+struct SmoothState {
+    alpha: f64,
+}
+
+impl Persistent for SmoothState {
+    fn save(&self, values: &mut Values) {
+        values.set("alpha", self.alpha);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("alpha", &mut self.alpha);
+    }
+}
+
+impl Stateful for Smooth {
+    type State = SmoothState;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.alpha = self.alpha;
+    }
+}
+
 impl jack::ProcessHandler for Smooth {
     fn process(&mut self, _: &jack::Client, ps: &jack::ProcessScope) -> jack::Control {
         if let Ok(msg) = self.messages_in.try_recv() {
@@ -93,12 +120,14 @@ struct SmoothUI {
 
 impl SmoothUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages: std::sync::mpsc::Sender<SmoothMessages>,
+        alpha: f64,
     ) -> SmoothUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         SmoothUI {
             message_out: messages,
-            current_alpha: ALPHA_DEFAULT,
+            current_alpha: alpha,
             sent_alpha: -1.0,
             messages: Vec::new(),
         }
@@ -152,35 +181,30 @@ impl eframe::App for SmoothUI {
 
 pub fn smooth() -> Result<(), CommonError> {
     // open client
-    let (client, _status) = match jack::Client::new("smooth", jack::ClientOptions::NO_START_SERVER)
-    {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(CommonError::UnableToStartClient(e));
-        }
-    };
+    let session = Session::start("Smooth")?;
+    let client = session.client("smooth")?;
 
     //open a message channel for the recorder and the UI
     let (send, rcv) = std::sync::mpsc::channel();
 
-    let synth = Smooth::new(ALPHA_DEFAULT, &client, rcv)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(SmoothState {
+        alpha: ALPHA_DEFAULT,
+    });
+    let synth = Smooth::new(state.alpha, &client, rcv)?;
+    //the value used by the effect, which may differ from the saved one
+    let alpha = synth.alpha;
+    let title = session.window_title("Smooth");
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Smooth",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(SmoothUI::new(cc, send)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+        Box::new(|cc| Ok(Box::new(SmoothUI::new(cc, send, alpha)))),
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

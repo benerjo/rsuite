@@ -3,6 +3,7 @@ use eframe::egui::{self, ViewportBuilder};
 use crate::{
     configuration::{self, ConfigurationValue, FloatValueInRange},
     midiinput::MidiInput,
+    nsm::{self, ConfigurationState, Session, Stateful},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType, KeyBoardKeySetter},
 };
@@ -97,6 +98,7 @@ impl Distortion {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToDistortion>,
         mut messages_out: std::sync::mpsc::Sender<MessageToDistortionUI>,
+        state: ConfigurationState<Configuration>,
     ) -> Result<Distortion, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -111,7 +113,7 @@ impl Distortion {
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::AudioOut, e)),
         };
 
-        let current_config = Configuration::new();
+        let current_config = state.conf;
 
         //initialize the configuration on the UI side
         Self::send_message(
@@ -126,7 +128,7 @@ impl Distortion {
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
             conf: current_config,
             clipper: Clipper::new(client.sample_rate() as usize),
         })
@@ -139,6 +141,14 @@ impl Distortion {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Distortion {
+    type State = ConfigurationState<Configuration>;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.update(&self.conf, &self.keyboard);
     }
 }
 
@@ -217,10 +227,11 @@ struct DistortionUI {
 
 impl DistortionUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToDistortionUI>,
         messages_out: std::sync::mpsc::Sender<MessageToDistortion>,
     ) -> DistortionUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         DistortionUI {
             messages_in,
             message_out: messages_out,
@@ -303,26 +314,20 @@ impl eframe::App for DistortionUI {
 
 pub fn distortion() -> Result<(), CommonError> {
     // open client
-    let (client, _status) =
-        match jack::Client::new("distortion", jack::ClientOptions::NO_START_SERVER) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(CommonError::UnableToStartClient(e));
-            }
-        };
+    let session = Session::start("Distortion")?;
+    let client = session.client("distortion")?;
 
     //open a message channel for the distortion and the UI
     let (send_to_distortion, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_distortion) = std::sync::mpsc::channel();
 
-    let effect = Distortion::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), effect) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ConfigurationState::new(Configuration::new()));
+    let effect = Distortion::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Distortion");
+    let active_client = session.activate(client, effect, state)?;
 
-    match eframe::run_native(
-        "Distortion",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
@@ -335,10 +340,7 @@ pub fn distortion() -> Result<(), CommonError> {
                 send_to_distortion,
             )))
         }),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

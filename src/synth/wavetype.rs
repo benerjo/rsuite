@@ -62,3 +62,50 @@ impl std::fmt::Display for WaveType {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WaveTypeConversionError {
+    UnknownType(String),
+}
+
+impl std::fmt::Display for WaveTypeConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WaveTypeConversionError::UnknownType(w) => write!(f, "Unknown wave type: {w}"),
+        }
+    }
+}
+
+impl std::error::Error for WaveTypeConversionError {}
+
+impl std::str::FromStr for WaveType {
+    type Err = WaveTypeConversionError;
+
+    ///Read the name written by 'Display'
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        [
+            WaveType::Sin,
+            WaveType::Square,
+            WaveType::SawTooth,
+            WaveType::Triangle,
+        ]
+        .into_iter()
+        .find(|w| w.to_string() == s)
+        .ok_or_else(|| WaveTypeConversionError::UnknownType(s.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::WaveType;
+
+    #[test]
+    fn names() {
+        let mut wave = WaveType::Sin;
+        for _ in 0..4 {
+            assert_eq!(wave.to_string().parse::<WaveType>(), Ok(wave));
+            wave = wave.cycle();
+        }
+        assert!("sin".parse::<WaveType>().is_err());
+    }
+}

@@ -5,6 +5,7 @@ use crate::{
         self, ConfigurationValue, FloatValueInRange, UsizeValueInRange, WaveTypeValue,
     },
     midiinput::MidiInput,
+    nsm::{self, ConfigurationState, Session, Stateful},
     synth::{
         hardware::{HardWare, KeyBoardKey},
         wavetype::WaveType,
@@ -109,6 +110,7 @@ impl Kicker {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToKicker>,
         mut messages_out: std::sync::mpsc::Sender<MessageToKickerUI>,
+        state: ConfigurationState<Configuration>,
     ) -> Result<Kicker, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -121,7 +123,7 @@ impl Kicker {
 
         let sample_rate = client.sample_rate();
 
-        let current_config = Configuration::new(sample_rate);
+        let current_config = state.conf;
 
         //initialize the configuration on the UI side
         Self::send_message(
@@ -144,7 +146,7 @@ impl Kicker {
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
             conf: current_config,
         })
     }
@@ -156,6 +158,14 @@ impl Kicker {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Kicker {
+    type State = ConfigurationState<Configuration>;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.update(&self.conf, &self.keyboard);
     }
 }
 
@@ -305,10 +315,11 @@ struct KickerUI {
 
 impl KickerUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToKickerUI>,
         messages_out: std::sync::mpsc::Sender<MessageToKicker>,
     ) -> KickerUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         KickerUI {
             messages_in,
             message_out: messages_out,
@@ -391,35 +402,29 @@ impl eframe::App for KickerUI {
 
 pub fn kick() -> Result<(), CommonError> {
     // open client
-    let (client, _status) = match jack::Client::new("kick", jack::ClientOptions::NO_START_SERVER) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(CommonError::UnableToStartClient(e));
-        }
-    };
+    let session = Session::start("Kick")?;
+    let client = session.client("kick")?;
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let synth = Kicker::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ConfigurationState::new(Configuration::new(
+        client.sample_rate(),
+    )));
+    let synth = Kicker::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Kick");
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Kick",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(KickerUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

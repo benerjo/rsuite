@@ -2,6 +2,7 @@ use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
     midiinput::MidiInput,
+    nsm::{self, sync, Persistent, Session, Stateful, Values},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType},
 };
@@ -31,6 +32,9 @@ struct Recorder {
     key_change: bool,
     ///The keyboard events we are listening to
     keyboard: HardWare,
+    ///The directory in which the audio files are written. If not defined,
+    /// the current directory is used
+    directory: Option<std::path::PathBuf>,
 }
 
 impl Recorder {
@@ -38,6 +42,8 @@ impl Recorder {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToRecorder>,
         messages_out: std::sync::mpsc::Sender<MessageToRecorderUI>,
+        state: RecorderState,
+        directory: Option<std::path::PathBuf>,
     ) -> Result<Recorder, CommonError> {
         let sample_rate = client.sample_rate() as usize;
         let a_in = match client.register_port("music_in", jack::AudioIn::default()) {
@@ -50,7 +56,7 @@ impl Recorder {
         };
 
         Ok(Recorder {
-            active: true,
+            active: state.active,
             rate: sample_rate,
             midi_in: m_in,
             audio_mono_in: a_in,
@@ -58,10 +64,51 @@ impl Recorder {
             recording: false,
             messages_in,
             messages_out,
-            audio_prefix: String::from("Rec"),
+            audio_prefix: state.prefix,
             key_change: false,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
+            directory,
         })
+    }
+
+    ///The beginning of the name of the audio files, including their directory
+    fn file_prefix(&self) -> String {
+        match &self.directory {
+            Some(dir) => dir.join(&self.audio_prefix).to_string_lossy().into_owned(),
+            None => self.audio_prefix.clone(),
+        }
+    }
+}
+
+///The state saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+struct RecorderState {
+    active: bool,
+    prefix: String,
+    keyboard: HardWare,
+}
+
+impl Persistent for RecorderState {
+    fn save(&self, values: &mut Values) {
+        values.set("active", self.active);
+        values.set("prefix", &self.prefix);
+        self.keyboard.save(values);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("active", &mut self.active);
+        values.load("prefix", &mut self.prefix);
+        self.keyboard.load(values);
+    }
+}
+
+impl Stateful for Recorder {
+    type State = RecorderState;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.active = self.active;
+        sync(&mut state.prefix, &self.audio_prefix);
+        sync(&mut state.keyboard, &self.keyboard);
     }
 }
 
@@ -82,7 +129,7 @@ impl jack::ProcessHandler for Recorder {
                         if let Err(e) = crate::wavwriter::save_wav(
                             tmp_buf,
                             self.rate as u32,
-                            Some(&self.audio_prefix),
+                            Some(&self.file_prefix()),
                         ) {
                             println!("Error while saving the wav file: {e}");
                         }
@@ -129,7 +176,7 @@ impl jack::ProcessHandler for Recorder {
                                 if let Err(e) = crate::wavwriter::save_wav(
                                     tmp_buf,
                                     self.rate as u32,
-                                    Some(&self.audio_prefix),
+                                    Some(&self.file_prefix()),
                                 ) {
                                     println!("Error while saving the wav file: {e}");
                                 }
@@ -196,17 +243,19 @@ struct RecorderUI {
 
 impl RecorderUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToRecorderUI>,
         messages_out: std::sync::mpsc::Sender<MessageToRecorder>,
+        state: &RecorderState,
     ) -> RecorderUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         RecorderUI {
             messages_in,
             message_out: messages_out,
             messages: Vec::new(),
             record_pressed: false,
-            current_prefix: String::from(""),
-            active: true,
+            current_prefix: state.prefix.clone(),
+            active: state.active,
         }
     }
 
@@ -306,36 +355,40 @@ impl eframe::App for RecorderUI {
 
 pub fn record() -> Result<(), CommonError> {
     // open client
-    let (client, _status) =
-        match jack::Client::new("recorder", jack::ClientOptions::NO_START_SERVER) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(CommonError::UnableToStartClient(e));
-            }
-        };
+    let session = Session::start("Recorder")?;
+    let client = session.client("recorder")?;
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let synth = Recorder::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(RecorderState {
+        active: true,
+        prefix: String::from("Rec"),
+        keyboard: HardWare::new(),
+    });
+    let ui_state = state.clone();
+    let directory = session.directory().map(std::path::Path::to_path_buf);
+    let synth = Recorder::new(&client, rcv_from_ui, send_to_ui, state.clone(), directory)?;
+    let title = session.window_title("Recorder");
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Recorder",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(RecorderUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+        Box::new(|cc| {
+            Ok(Box::new(RecorderUI::new(
+                cc,
+                rcv_from_rec,
+                send_to_rec,
+                &ui_state,
+            )))
+        }),
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

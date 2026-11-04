@@ -3,6 +3,7 @@ use eframe::egui::{self, ViewportBuilder};
 use crate::{
     configuration::{self, ConfigurationValue, FloatValueInRange, UsizeValueInRange},
     midiinput::MidiInput,
+    nsm::{self, ConfigurationState, Session, Stateful},
     synth::{
         hardware::{HardWare, KeyBoardKey},
         wavetype::WaveType,
@@ -163,6 +164,7 @@ impl Chorus {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToChorus>,
         mut messages_out: std::sync::mpsc::Sender<MessageToChorusUI>,
+        state: ConfigurationState<Configuration>,
     ) -> Result<Chorus, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -177,7 +179,7 @@ impl Chorus {
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::AudioOut, e)),
         };
 
-        let current_config = Configuration::new();
+        let current_config = state.conf;
 
         //initialize the configuration on the UI side
         Self::send_message(
@@ -192,7 +194,7 @@ impl Chorus {
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
             conf: current_config,
             delay_line: DelayLine::new(client.sample_rate() as usize),
         })
@@ -205,6 +207,14 @@ impl Chorus {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Chorus {
+    type State = ConfigurationState<Configuration>;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.update(&self.conf, &self.keyboard);
     }
 }
 
@@ -283,10 +293,11 @@ struct ChorusUI {
 
 impl ChorusUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToChorusUI>,
         messages_out: std::sync::mpsc::Sender<MessageToChorus>,
     ) -> ChorusUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         ChorusUI {
             messages_in,
             message_out: messages_out,
@@ -369,36 +380,27 @@ impl eframe::App for ChorusUI {
 
 pub fn chorus() -> Result<(), CommonError> {
     // open client
-    let (client, _status) = match jack::Client::new("chorus", jack::ClientOptions::NO_START_SERVER)
-    {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(CommonError::UnableToStartClient(e));
-        }
-    };
+    let session = Session::start("Chorus")?;
+    let client = session.client("chorus")?;
 
     //open a message channel for the chorus and the UI
     let (send_to_chorus, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_chorus) = std::sync::mpsc::channel();
 
-    let effect = Chorus::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), effect) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ConfigurationState::new(Configuration::new()));
+    let effect = Chorus::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Chorus");
+    let active_client = session.activate(client, effect, state)?;
 
-    match eframe::run_native(
-        "Chorus",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(ChorusUI::new(cc, rcv_from_chorus, send_to_chorus)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),
@@ -413,8 +415,29 @@ mod test {
     use super::{Configuration, DelayLine, MAX_DELAY, MAX_DEPTH, MAX_SPEED, MAX_VOICES};
     use crate::{
         configuration::{FloatValueInRange, UsizeValueInRange},
+        nsm::{ConfigurationState, Persistent, Values},
         synth::hardware::KeyBoardKey,
     };
+
+    #[test]
+    fn state_is_restored() {
+        let mut state = ConfigurationState::new(Configuration::new());
+        state.conf.delay.set_value(12.5);
+        state.conf.voices.set_value(5);
+        state.keyboard.update_key(KeyBoardKey::Parameter, 20);
+        let mut values = Values::new();
+        state.save(&mut values);
+
+        let mut loaded = ConfigurationState::new(Configuration::new());
+        assert_ne!(loaded, state);
+        loaded.load(&values);
+        assert_eq!(loaded, state);
+
+        //values outside of the range are limited to the range
+        values.set("value.delay", 1000.0);
+        loaded.load(&values);
+        assert_eq!(loaded.conf.delay.get_value(), MAX_DELAY);
+    }
 
     fn conf(delay: f64, depth: f64, speed: f64, voices: usize, mix: f64) -> Configuration {
         let key = KeyBoardKey::Parameter;

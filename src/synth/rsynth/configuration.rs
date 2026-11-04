@@ -1,4 +1,7 @@
-use crate::synth::wavetype::WaveType;
+use crate::{
+    nsm::{Persistent, Values},
+    synth::{hardware::HardWare, wavetype::WaveType},
+};
 
 ///A configuration is user-input defined: it specify
 /// the wave type, the amount of overtone, the speed of the attack
@@ -42,5 +45,56 @@ impl Configuration {
             mod_intensity: 0.1,
             mod_speed: 8.0,
         }
+    }
+}
+
+impl Persistent for Configuration {
+    fn save(&self, values: &mut Values) {
+        values.set("wave", self.wave);
+        for (index, overtone) in self.overtone.iter().enumerate() {
+            values.set(&format!("overtone.{index}"), overtone);
+        }
+        values.set("fade_in_duration", self.fade_in_duration);
+        values.set("fade_in_shape", self.fade_in_shape);
+        values.set("fade_out_duration", self.fade_out_duration);
+        values.set("fade_out_shape", self.fade_out_shape);
+        values.set("gain", self.gain);
+        values.set("modulation", self.modulation);
+        values.set("mod_intensity", self.mod_intensity);
+        values.set("mod_speed", self.mod_speed);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("wave", &mut self.wave);
+        for (index, overtone) in self.overtone.iter_mut().enumerate() {
+            values.load(&format!("overtone.{index}"), overtone);
+        }
+        values.load("fade_in_duration", &mut self.fade_in_duration);
+        values.load("fade_in_shape", &mut self.fade_in_shape);
+        values.load("fade_out_duration", &mut self.fade_out_duration);
+        values.load("fade_out_shape", &mut self.fade_out_shape);
+        values.load("gain", &mut self.gain);
+        values.load("modulation", &mut self.modulation);
+        values.load("mod_intensity", &mut self.mod_intensity);
+        values.load("mod_speed", &mut self.mod_speed);
+    }
+}
+
+///The state of the synthesizer saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+pub struct SynthState {
+    pub config: Configuration,
+    pub keyboard: HardWare,
+}
+
+impl Persistent for SynthState {
+    fn save(&self, values: &mut Values) {
+        self.config.save(values);
+        self.keyboard.save(values);
+    }
+
+    fn load(&mut self, values: &Values) {
+        self.config.load(values);
+        self.keyboard.load(values);
     }
 }

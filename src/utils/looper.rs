@@ -3,6 +3,7 @@ use eframe::egui::{self, ViewportBuilder};
 use crate::{
     configuration::{self, ConfigurationValue, UsizeValueInRange},
     midiinput::{MidiInput, BAR_NOT_RUNNING, CHANNEL_MASK, NOTE_END, NOTE_START, STATUS_MASK},
+    nsm::{self, ConfigurationState, Session, Stateful},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{create_keyboard_select, CommonError, ConnectionType, KeyBoardKeySetter},
 };
@@ -499,6 +500,7 @@ impl Loop {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToLoop>,
         mut messages_out: std::sync::mpsc::Sender<MessageToLoopUI>,
+        state: ConfigurationState<Configuration>,
     ) -> Result<Loop, CommonError> {
         let c_in = match client.register_port("clock_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -513,7 +515,7 @@ impl Loop {
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiOut, e)),
         };
 
-        let current_config = Configuration::new();
+        let current_config = state.conf;
 
         //initialize the configuration on the UI side
         Self::send_message(
@@ -528,7 +530,7 @@ impl Loop {
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
             conf: current_config,
             looper: Looper::new(),
             frames_elapsed: 0,
@@ -554,6 +556,14 @@ impl Loop {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Loop {
+    type State = ConfigurationState<Configuration>;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.update(&self.conf, &self.keyboard);
     }
 }
 
@@ -734,10 +744,11 @@ struct LoopUI {
 
 impl LoopUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToLoopUI>,
         messages_out: std::sync::mpsc::Sender<MessageToLoop>,
     ) -> LoopUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         LoopUI {
             messages_in,
             message_out: messages_out,
@@ -885,35 +896,27 @@ impl eframe::App for LoopUI {
 ///Note that 'loop' is a keyword: it cannot be used as the name of this function
 pub fn looper() -> Result<(), CommonError> {
     // open client
-    let (client, _status) = match jack::Client::new("loop", jack::ClientOptions::NO_START_SERVER) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(CommonError::UnableToStartClient(e));
-        }
-    };
+    let session = Session::start("Loop")?;
+    let client = session.client("loop")?;
 
     //open a message channel for the loop and the UI
     let (send_to_loop, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_loop) = std::sync::mpsc::channel();
 
-    let utility = Loop::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), utility) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ConfigurationState::new(Configuration::new()));
+    let utility = Loop::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Loop");
+    let active_client = session.activate(client, utility, state)?;
 
-    match eframe::run_native(
-        "Loop",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(LoopUI::new(cc, rcv_from_loop, send_to_loop)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

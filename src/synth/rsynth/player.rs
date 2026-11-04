@@ -1,10 +1,13 @@
 use std::fmt::Display;
 
-use crate::synth::{
-    hardware::{HardWare, KeyBoardKey},
-    rsynth::configuration::Configuration,
-};
 use crate::{midiinput::MidiInput, utils::KeyBoardKeySetter};
+use crate::{
+    nsm::{self, Stateful},
+    synth::{
+        hardware::{HardWare, KeyBoardKey},
+        rsynth::configuration::{Configuration, SynthState},
+    },
+};
 
 pub const FADE_DURATION_STEP: f64 = 0.025;
 pub const GAIN_STEP: f64 = 8.0 / 127.0;
@@ -103,6 +106,7 @@ impl Player {
         client: &jack::Client,
         extra_input: std::sync::mpsc::Receiver<MessageToPlayer>,
         channel_input: std::sync::mpsc::Sender<MessageToUI>,
+        state: SynthState,
     ) -> Result<Player, PlayerError> {
         let sample_rate = client.sample_rate();
 
@@ -120,11 +124,6 @@ impl Player {
             fout.push(0.0);
         }
 
-        let midi_keyboard = match Self::load_keyboard_conf() {
-            Ok(v) => v,
-            Err(_e) => HardWare::default(),
-        };
-
         Ok(Player {
             rate: sample_rate as usize,
             frame_t: 1.0 / sample_rate as f64,
@@ -134,15 +133,23 @@ impl Player {
             midi_in: client.register_port("midi_input", jack::MidiIn::default())?,
             audio_mono_out: client.register_port("music_out", jack::AudioOut::default())?,
             change_listener: channel_input,
-            keyboard: midi_keyboard,
+            keyboard: state.keyboard,
             velocity: velocity_array,
             play: play_array,
             fade_in: fin,
             fade_out: fout,
-            config: Configuration::new(),
+            config: state.config,
             external_commands: extra_input,
             map_next_contrl: None,
         })
+    }
+
+    ///The mapping of the controllers used when nothing was saved
+    pub fn default_keyboard() -> HardWare {
+        match Self::load_keyboard_conf() {
+            Ok(v) => v,
+            Err(_e) => HardWare::default(),
+        }
     }
 
     fn get_frequency(note_index: f64) -> f64 {
@@ -390,6 +397,15 @@ impl Player {
 
         // Continue as normal
         jack::Control::Continue
+    }
+}
+
+impl Stateful for Player {
+    type State = SynthState;
+
+    fn publish(&self, state: &mut Self::State) {
+        nsm::sync(&mut state.config, &self.config);
+        nsm::sync(&mut state.keyboard, &self.keyboard);
     }
 }
 

@@ -3,6 +3,7 @@ use jack::{MidiWriter, RawMidi};
 
 use crate::{
     midiinput::MidiInput,
+    nsm::{self, sync, Persistent, Session, Stateful, Values},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType},
 };
@@ -33,6 +34,7 @@ impl Transposer {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToTransposer>,
         messages_out: std::sync::mpsc::Sender<MessageToTransposerUI>,
+        state: TransposerState,
     ) -> Result<Transposer, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -44,13 +46,13 @@ impl Transposer {
         };
 
         Ok(Transposer {
-            transpose: 0,
+            transpose: state.transpose % MAX_TRANSPOSE,
             midi_in: m_in,
             midi_out: m_out,
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
         })
     }
 
@@ -78,6 +80,34 @@ impl Transposer {
                 messages_out,
             );
         }
+    }
+}
+
+///The state saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+struct TransposerState {
+    transpose: usize,
+    keyboard: HardWare,
+}
+
+impl Persistent for TransposerState {
+    fn save(&self, values: &mut Values) {
+        values.set("transpose", self.transpose);
+        self.keyboard.save(values);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("transpose", &mut self.transpose);
+        self.keyboard.load(values);
+    }
+}
+
+impl Stateful for Transposer {
+    type State = TransposerState;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.transpose = self.transpose;
+        sync(&mut state.keyboard, &self.keyboard);
     }
 }
 
@@ -198,15 +228,17 @@ struct TransposerUI {
 
 impl TransposerUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToTransposerUI>,
         messages_out: std::sync::mpsc::Sender<MessageToTransposer>,
+        transpose_amount: usize,
     ) -> TransposerUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         TransposerUI {
             messages_in,
             message_out: messages_out,
             messages: Vec::new(),
-            transpose_amount: 0,
+            transpose_amount,
         }
     }
 
@@ -293,36 +325,39 @@ impl eframe::App for TransposerUI {
 
 pub fn transposer() -> Result<(), CommonError> {
     // open client
-    let (client, _status) =
-        match jack::Client::new("transposer", jack::ClientOptions::NO_START_SERVER) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(CommonError::UnableToStartClient(e));
-            }
-        };
+    let session = Session::start("Transposer")?;
+    let client = session.client("transposer")?;
+
+    let client_name = session.window_title(client.name());
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let synth = Transposer::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(TransposerState {
+        transpose: 0,
+        keyboard: HardWare::new(),
+    });
+    let transpose = state.transpose % MAX_TRANSPOSE;
+    let synth = Transposer::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Transposer",
+    eframe::run_native(
+        &client_name,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(TransposerUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+        Box::new(|cc| {
+            Ok(Box::new(TransposerUI::new(
+                cc,
+                rcv_from_rec,
+                send_to_rec,
+                transpose,
+            )))
+        }),
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

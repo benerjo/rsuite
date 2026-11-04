@@ -1,6 +1,7 @@
 use std::ops::RangeInclusive;
 
 use crate::{
+    nsm::Values,
     synth::{hardware::KeyBoardKey, wavetype::WaveType},
     utils::{create_keyboard_select, KeyBoardKeySetter},
 };
@@ -48,6 +49,11 @@ impl FloatValueInRange {
     ///Retrieve the value
     pub fn get_value(&self) -> f64 {
         self.value
+    }
+
+    ///Change the value. A value outside of the range is set to the closest bound
+    pub fn set_value(&mut self, value: f64) {
+        self.value = value.clamp(*self.range.start(), *self.range.end());
     }
 
     ///Retrieve the keyboard key that is expected to this value
@@ -243,6 +249,39 @@ impl<'conf> ConfigurationValue<'conf> {
             ConfigurationValue::WaveType(value) => value.from_midi_value(midi_value),
         }
     }
+
+    ///The name under which the value is saved
+    fn saved_name(&self) -> String {
+        format!("value.{}", self.name())
+    }
+
+    ///Store the value in a list of saved values
+    fn save(&self, values: &mut Values) {
+        let name = self.saved_name();
+        match self {
+            ConfigurationValue::Float(value) => values.set(&name, value.value),
+            ConfigurationValue::USize(value) => values.set(&name, value.value),
+            ConfigurationValue::WaveType(value) => values.set(&name, value.value),
+        }
+    }
+
+    ///Restore the value from a list of saved values
+    fn load(&mut self, values: &Values) {
+        let name = self.saved_name();
+        match self {
+            ConfigurationValue::Float(value) => {
+                if let Some(v) = values.get(&name) {
+                    value.set_value(v);
+                }
+            }
+            ConfigurationValue::USize(value) => {
+                if let Some(v) = values.get(&name) {
+                    value.set_value(v);
+                }
+            }
+            ConfigurationValue::WaveType(value) => values.load(&name, &mut value.value),
+        }
+    }
 }
 
 ///Trait for configurations of programs
@@ -270,6 +309,20 @@ where
             }
         }
         return false;
+    }
+
+    ///Store every value of the configuration
+    fn save_values(&'c mut self, values: &mut Values) {
+        for e in self.elements() {
+            e.save(values);
+        }
+    }
+
+    ///Restore the values of the configuration. Missing values are left unchanged
+    fn load_values(&'c mut self, values: &Values) {
+        for mut e in self.elements() {
+            e.load(values);
+        }
     }
 
     ///Create the menu entries to change the controller key

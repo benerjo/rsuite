@@ -26,6 +26,49 @@ pub enum KeyBoardKey {
     Tempo,
 }
 
+impl KeyBoardKey {
+    ///The keys without parameter. Any new key has to be added here to be restored
+    /// by 'from_id'
+    const SIMPLE_KEYS: [KeyBoardKey; 20] = [
+        KeyBoardKey::WaveSelection,
+        KeyBoardKey::FadeInDuration,
+        KeyBoardKey::FadeInShape,
+        KeyBoardKey::FadeOutDuration,
+        KeyBoardKey::FadeOutShape,
+        KeyBoardKey::Duration,
+        KeyBoardKey::Gain,
+        KeyBoardKey::Record,
+        KeyBoardKey::Play,
+        KeyBoardKey::Stop,
+        KeyBoardKey::Break,
+        KeyBoardKey::TransposeUp,
+        KeyBoardKey::TransposeDown,
+        KeyBoardKey::Parameter,
+        KeyBoardKey::ParameterB,
+        KeyBoardKey::Modulation,
+        KeyBoardKey::ModulationSpeed,
+        KeyBoardKey::ModulationIntensity,
+        KeyBoardKey::Activate,
+        KeyBoardKey::Tempo,
+    ];
+
+    ///A name identifying the key, that does not change with the displayed text
+    pub fn id(&self) -> String {
+        format!("{self:?}")
+    }
+
+    ///Retrieve the key identified by the result of 'id'
+    pub fn from_id(id: &str) -> Option<KeyBoardKey> {
+        if let Some(index) = id
+            .strip_prefix("Overtone(")
+            .and_then(|i| i.strip_suffix(')'))
+        {
+            return index.parse().ok().map(KeyBoardKey::Overtone);
+        }
+        Self::SIMPLE_KEYS.into_iter().find(|k| k.id() == id)
+    }
+}
+
 impl Display for KeyBoardKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -56,7 +99,7 @@ impl Display for KeyBoardKey {
 
 ///The hardware structure is used to abstract
 /// the midi control message and map them to a KeyBoardKey value
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HardWare {
     midi_keys_mapping: HashMap<u8, KeyBoardKey>,
     kb_keys_mapping: HashMap<KeyBoardKey, u8>,
@@ -112,6 +155,11 @@ impl HardWare {
         }
     }
 
+    ///Retrieve all the keys that are mapped, with their midi control
+    pub fn mappings(&self) -> impl Iterator<Item = (KeyBoardKey, u8)> + '_ {
+        self.kb_keys_mapping.iter().map(|(k, m)| (*k, *m))
+    }
+
     ///Clear all mapping
     pub fn clear_all(&mut self) {
         self.midi_keys_mapping.clear();
@@ -139,5 +187,22 @@ impl HardWare {
         }
         self.midi_keys_mapping.insert(midi_key, key.clone());
         self.kb_keys_mapping.insert(key, midi_key);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::KeyBoardKey;
+
+    #[test]
+    fn key_ids() {
+        let keys = KeyBoardKey::SIMPLE_KEYS
+            .into_iter()
+            .chain((0..9).map(KeyBoardKey::Overtone));
+        for key in keys {
+            assert_eq!(KeyBoardKey::from_id(&key.id()), Some(key));
+        }
+        assert_eq!(KeyBoardKey::from_id("Unknown"), None);
+        assert_eq!(KeyBoardKey::from_id("Overtone(x)"), None);
     }
 }

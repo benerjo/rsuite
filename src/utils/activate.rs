@@ -2,6 +2,7 @@ use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
     midiinput::MidiInput,
+    nsm::{self, sync, Persistent, Session, Stateful, Values},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType},
 };
@@ -28,6 +29,7 @@ impl Activator {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToActivator>,
         messages_out: std::sync::mpsc::Sender<MessageToActivatorUI>,
+        state: ActivatorState,
     ) -> Result<Activator, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -39,13 +41,13 @@ impl Activator {
         };
 
         Ok(Activator {
-            active: true,
+            active: state.active,
             midi_in: m_in,
             midi_out: m_out,
             messages_in,
             messages_out,
             key_change: false,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
         })
     }
 
@@ -56,6 +58,34 @@ impl Activator {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+///The state saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+struct ActivatorState {
+    active: bool,
+    keyboard: HardWare,
+}
+
+impl Persistent for ActivatorState {
+    fn save(&self, values: &mut Values) {
+        values.set("active", self.active);
+        self.keyboard.save(values);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("active", &mut self.active);
+        self.keyboard.load(values);
+    }
+}
+
+impl Stateful for Activator {
+    type State = ActivatorState;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.active = self.active;
+        sync(&mut state.keyboard, &self.keyboard);
     }
 }
 
@@ -145,15 +175,17 @@ struct RecorderUI {
 
 impl RecorderUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToActivatorUI>,
         messages_out: std::sync::mpsc::Sender<MessageToActivator>,
+        active: bool,
     ) -> RecorderUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         RecorderUI {
             messages_in,
             message_out: messages_out,
             messages: Vec::new(),
-            active_pressed: true,
+            active_pressed: active,
         }
     }
 
@@ -238,36 +270,38 @@ impl eframe::App for RecorderUI {
 
 pub fn activator() -> Result<(), CommonError> {
     // open client
-    let (client, _status) =
-        match jack::Client::new("activator", jack::ClientOptions::NO_START_SERVER) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(CommonError::UnableToStartClient(e));
-            }
-        };
+    let session = Session::start("Activator")?;
+    let client = session.client("activator")?;
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let synth = Activator::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ActivatorState {
+        active: true,
+        keyboard: HardWare::new(),
+    });
+    let active = state.active;
+    let synth = Activator::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Activator");
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Activator",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(RecorderUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+        Box::new(|cc| {
+            Ok(Box::new(RecorderUI::new(
+                cc,
+                rcv_from_rec,
+                send_to_rec,
+                active,
+            )))
+        }),
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

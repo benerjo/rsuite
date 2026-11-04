@@ -4,6 +4,7 @@ use rand::random;
 use crate::{
     configuration::{self, ConfigurationValue, FloatValueInRange, UsizeValueInRange},
     midiinput::MidiInput,
+    nsm::{self, ConfigurationState, Session, Stateful},
     synth::hardware::{HardWare, KeyBoardKey},
     utils::{CommonError, ConnectionType, KeyBoardKeySetter},
 };
@@ -87,6 +88,7 @@ impl Snare {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToSnare>,
         mut messages_out: std::sync::mpsc::Sender<MessageToSnareUI>,
+        state: ConfigurationState<Configuration>,
     ) -> Result<Snare, CommonError> {
         let m_in = match client.register_port("midi_in", jack::MidiIn::default()) {
             Ok(v) => v,
@@ -97,9 +99,7 @@ impl Snare {
             Err(e) => return Err(CommonError::ConnectionError(ConnectionType::MidiOut, e)),
         };
 
-        let sample_rate = client.sample_rate();
-
-        let current_config = Configuration::new(sample_rate);
+        let current_config = state.conf;
 
         //initialize the configuration on the UI side
         Self::send_message(
@@ -123,7 +123,7 @@ impl Snare {
             messages_in,
             messages_out,
             key_change: None,
-            keyboard: HardWare::new(),
+            keyboard: state.keyboard,
             conf: current_config,
             last_output: last.clone(),
             last_input: last,
@@ -137,6 +137,14 @@ impl Snare {
         if let Err(e) = messages_out.send(msg) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Snare {
+    type State = ConfigurationState<Configuration>;
+
+    fn publish(&self, state: &mut Self::State) {
+        state.update(&self.conf, &self.keyboard);
     }
 }
 
@@ -281,10 +289,11 @@ struct SnareUI {
 
 impl SnareUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToSnareUI>,
         messages_out: std::sync::mpsc::Sender<MessageToSnare>,
     ) -> SnareUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         SnareUI {
             messages_in,
             message_out: messages_out,
@@ -367,35 +376,29 @@ impl eframe::App for SnareUI {
 
 pub fn snare() -> Result<(), CommonError> {
     // open client
-    let (client, _status) = match jack::Client::new("snare", jack::ClientOptions::NO_START_SERVER) {
-        Ok(v) => v,
-        Err(e) => {
-            return Err(CommonError::UnableToStartClient(e));
-        }
-    };
+    let session = Session::start("Snare")?;
+    let client = session.client("snare")?;
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let synth = Snare::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), synth) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(ConfigurationState::new(Configuration::new(
+        client.sample_rate(),
+    )));
+    let synth = Snare::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Snare");
+    let active_client = session.activate(client, synth, state)?;
 
-    match eframe::run_native(
-        "Snare",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
         Box::new(|cc| Ok(Box::new(SnareUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),

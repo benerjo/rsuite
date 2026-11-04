@@ -4,6 +4,7 @@ use eframe::egui::{self, ViewportBuilder};
 
 use crate::{
     midiinput::{MidiInput, ALL_DEVICES, BAR_NOT_RUNNING, BAR_UNKNOWN},
+    nsm::{self, sync, Persistent, Session, Stateful, Values},
     synth::{
         hardware::{HardWare, KeyBoardKey},
         wavetype::WaveType,
@@ -34,6 +35,29 @@ impl Default for MetronomeConfiguration {
             nb_notes: 4,
             active: true,
         }
+    }
+}
+
+///The state saved by the session manager
+#[derive(Debug, Clone, PartialEq)]
+struct MetronomeState {
+    configuration: MetronomeConfiguration,
+    keyboard: HardWare,
+}
+
+impl Persistent for MetronomeState {
+    fn save(&self, values: &mut Values) {
+        values.set("bpm", self.configuration.bpm);
+        values.set("nb_notes", self.configuration.nb_notes);
+        values.set("active", self.configuration.active);
+        self.keyboard.save(values);
+    }
+
+    fn load(&mut self, values: &Values) {
+        values.load("bpm", &mut self.configuration.bpm);
+        values.load("nb_notes", &mut self.configuration.nb_notes);
+        values.load("active", &mut self.configuration.active);
+        self.keyboard.load(values);
     }
 }
 
@@ -80,6 +104,7 @@ impl Metronome {
         client: &jack::Client,
         messages_in: std::sync::mpsc::Receiver<MessageToMetronome>,
         messages_out: std::sync::mpsc::Sender<MessageToMetronomeUI>,
+        state: MetronomeState,
     ) -> Result<Metronome, CommonError> {
         let a_out = match client.register_port("audio_out", jack::AudioOut::default()) {
             Ok(v) => v,
@@ -97,8 +122,8 @@ impl Metronome {
         let sample_rate = client.sample_rate() as usize;
 
         Ok(Metronome {
-            configuration: MetronomeConfiguration::default(),
-            keyboard: HardWare::new(),
+            configuration: state.configuration,
+            keyboard: state.keyboard,
             midi_in: m_in,
             midi_out: m_out,
             audio_mono_out: a_out,
@@ -123,6 +148,15 @@ impl Metronome {
         if let Err(e) = writer.write(&message.to_raw(&mut bytes)) {
             eprintln!("Internal error: {e}");
         }
+    }
+}
+
+impl Stateful for Metronome {
+    type State = MetronomeState;
+
+    fn publish(&self, state: &mut Self::State) {
+        sync(&mut state.configuration, &self.configuration);
+        sync(&mut state.keyboard, &self.keyboard);
     }
 }
 
@@ -317,13 +351,15 @@ struct MetronomeUI {
 
 impl MetronomeUI {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        cc: &eframe::CreationContext<'_>,
         messages_in: std::sync::mpsc::Receiver<MessageToMetronomeUI>,
         messages_out: std::sync::mpsc::Sender<MessageToMetronome>,
+        conf: MetronomeConfiguration,
     ) -> MetronomeUI {
+        nsm::set_ui_context(&cc.egui_ctx);
         MetronomeUI {
             messages: Vec::with_capacity(16),
-            conf: MetronomeConfiguration::default(),
+            conf,
             messages_in,
             messages_out,
         }
@@ -432,36 +468,38 @@ impl eframe::App for MetronomeUI {
 
 pub fn metronome() -> Result<(), CommonError> {
     // open client
-    let (client, _status) =
-        match jack::Client::new("metronome", jack::ClientOptions::NO_START_SERVER) {
-            Ok(v) => v,
-            Err(e) => {
-                return Err(CommonError::UnableToStartClient(e));
-            }
-        };
+    let session = Session::start("Metronome")?;
+    let client = session.client("metronome")?;
 
     //open a message channel for the recorder and the UI
     let (send_to_rec, rcv_from_ui) = std::sync::mpsc::channel();
     let (send_to_ui, rcv_from_rec) = std::sync::mpsc::channel();
 
-    let util = Metronome::new(&client, rcv_from_ui, send_to_ui)?;
-    let active_client = match client.activate_async((), util) {
-        Ok(client) => client,
-        Err(e) => return Err(CommonError::UnableToActivateTheClient(e)),
-    };
+    let state = session.load(MetronomeState {
+        configuration: MetronomeConfiguration::default(),
+        keyboard: HardWare::new(),
+    });
+    let conf = state.configuration.clone();
+    let util = Metronome::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
+    let title = session.window_title("Metronome");
+    let active_client = session.activate(client, util, state)?;
 
-    match eframe::run_native(
-        "Metronome",
+    eframe::run_native(
+        &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),
             run_and_return: true,
             ..Default::default()
         },
-        Box::new(|cc| Ok(Box::new(MetronomeUI::new(cc, rcv_from_rec, send_to_rec)))),
-    ) {
-        Ok(_) => {}
-        Err(e) => return Err(CommonError::UnableToStartUserInterface(e)),
-    }
+        Box::new(|cc| {
+            Ok(Box::new(MetronomeUI::new(
+                cc,
+                rcv_from_rec,
+                send_to_rec,
+                conf,
+            )))
+        }),
+    )?;
 
     match active_client.deactivate() {
         Ok(_) => return Ok(()),
