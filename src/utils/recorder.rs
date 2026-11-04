@@ -211,14 +211,14 @@ impl RecorderUI {
     }
 
     fn create_menu(&mut self, ui: &mut egui::Ui) {
-        egui::menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("Settings", |ui| {
                 if ui
                     .toggle_value(&mut self.active, String::from("Active"))
                     .clicked()
                 {
                     self.send_message(MessageToRecorder::Active(self.active));
-                    ui.close_menu();
+                    ui.close();
                 }
                 crate::utils::create_keyboard_select(
                     ui,
@@ -285,15 +285,17 @@ impl RecorderUI {
 }
 
 impl eframe::App for RecorderUI {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         //the following line should only occur if a repaint is really needed.
         //To do this, we need to revise the architecture to make sure that it
         //can be called whenever there is someting in the queue
         ctx.request_repaint();
 
         self.read_input();
+    }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical(|ui| {
                 self.create_menu(ui);
                 self.create_content(ui);

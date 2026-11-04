@@ -119,7 +119,7 @@ pub fn create_keyboard_select<T>(
             if let Err(e) = sender.send(T::from(KeyBoardKeySetter::Set(keyboard_key))) {
                 messages.push(format!("Unable to send message to set {keyboard_key}: {e}"));
             } else {
-                ui.close_menu();
+                ui.close();
             }
         }
         if ui.button("Clear").clicked() {
@@ -128,7 +128,7 @@ pub fn create_keyboard_select<T>(
                     "Unable to send message to clear {keyboard_key}: {e}"
                 ));
             } else {
-                ui.close_menu();
+                ui.close();
             }
         }
     });
@@ -139,64 +139,64 @@ pub fn common_menu_luncher(ui: &mut eframe::egui::Ui, messages: &mut Vec<String>
     ui.menu_button("Synths", |ui| {
         if ui.button("Kick").clicked() {
             start_command("kick", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("RSynth").clicked() {
             start_command("rsynth", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Snare").clicked() {
             start_command("snare", messages);
-            ui.close_menu();
+            ui.close();
         }
     });
     ui.menu_button("Effects", |ui| {
         if ui.button("Chorus").clicked() {
             start_command("chorus", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Distortion").clicked() {
             start_command("distortion", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Smooth").clicked() {
             start_command("smooth", messages);
-            ui.close_menu();
+            ui.close();
         }
     });
     ui.menu_button("Utils", |ui| {
         if ui.button("Activator").clicked() {
             start_command("activator", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Loop").clicked() {
             start_command("loop", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Metronome").clicked() {
             start_command("metronome", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Recorder").clicked() {
             start_command("recorder", messages);
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("Transposer").clicked() {
             start_command("transposer", messages);
-            ui.close_menu();
+            ui.close();
         }
     });
 }
 
 ///Generate a line that can be shown in a plot
-pub fn create_plot_line(wave: &WaveType) -> Line {
+pub fn create_plot_line(wave: &WaveType) -> Line<'static> {
     let mut points = Vec::with_capacity(314 * 2);
     for i in 0..(314 * 2) {
         let x = (i as f64) * (1.0 / 100.0);
         points.push([x, wave.compute(x)]);
     }
     let points = PlotPoints::new(points);
-    Line::new(points)
+    Line::new(format!("{wave}"), points)
 }
 
 ///Create a slider from 0 to 128 with a DragValue to show the value

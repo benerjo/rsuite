@@ -61,7 +61,7 @@ impl<'c> RustySynth<'c> {
         };
     }
 
-    fn create_fade_shape(fade_in: bool, shape: u8, duration: f64) -> Line {
+    fn create_fade_shape(fade_in: bool, shape: u8, duration: f64) -> Line<'static> {
         let factor = Player::get_shape_factor(shape);
         let mut points = Vec::with_capacity(314 * 2);
         for i in 0..(300) {
@@ -74,11 +74,11 @@ impl<'c> RustySynth<'c> {
             points.push([x * duration, v]);
         }
         let points = PlotPoints::new(points);
-        Line::new(points)
+        Line::new(if fade_in { "fade in" } else { "fade out" }, points)
     }
 
     fn create_menu(&mut self, ui: &mut egui::Ui) {
-        egui::menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Save Configuration").clicked() {
                     todo!()
@@ -102,7 +102,7 @@ impl<'c> RustySynth<'c> {
                 if ui.button("Clear keyboard mapping").clicked() {
                     match self.commands.send(MessageToPlayer::ClearAllKeyboardKeys) {
                         Ok(()) => {
-                            ui.close_menu();
+                            ui.close();
                         }
                         Err(e) => self.messages.push(format!("[UI] {e}")),
                     }
@@ -110,7 +110,7 @@ impl<'c> RustySynth<'c> {
                 if ui.button("Save keyboard mapping").clicked() {
                     match self.commands.send(MessageToPlayer::SaveConf) {
                         Ok(()) => {
-                            ui.close_menu();
+                            ui.close();
                         }
                         Err(e) => self.messages.push(format!("[UI] {e}")),
                     }
@@ -118,7 +118,7 @@ impl<'c> RustySynth<'c> {
                 if ui.button("Load keyboard mapping").clicked() {
                     match self.commands.send(MessageToPlayer::LoadConf) {
                         Ok(()) => {
-                            ui.close_menu();
+                            ui.close();
                         }
                         Err(e) => self.messages.push(format!("[UI] {e}")),
                     }
@@ -249,7 +249,7 @@ impl<'c> RustySynth<'c> {
 }
 
 impl<'c> eframe::App for RustySynth<'c> {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         //the following line should only occur if a repaint is really needed.
         //To do this, we need to revise the architecture to make sure that it
         //can be called whenever there is someting in the queue
@@ -264,8 +264,10 @@ impl<'c> eframe::App for RustySynth<'c> {
                 MessageToUI::NewConfiguration(configuration) => self.configuration = configuration,
             }
         }
+    }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical(|ui| {
                 self.create_menu(ui);
                 self.create_content(ui);
