@@ -1,3 +1,4 @@
+use crate::nsm;
 use crate::utils::CommonError;
 use crate::{nsm::Session, synth::rsynth::ui::RustySynth};
 use eframe::egui::{self, ViewportBuilder};
@@ -32,7 +33,7 @@ pub fn rsynth() -> Result<(), CommonError> {
     .unwrap();
     let active_client = session.activate(client, synth, state)?;
 
-    eframe::run_native(
+    nsm::run_window(
         &client_name,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),

@@ -17,6 +17,7 @@
 
 mod osc;
 mod state;
+mod window;
 
 use std::{
     net::{SocketAddr, ToSocketAddrs, UdpSocket},
@@ -30,6 +31,7 @@ use std::{
 
 use osc::{Arg, Message};
 pub use state::{sync, ConfigurationState, Persistent, Stateful, Values};
+pub use window::run_window;
 
 use crate::utils::CommonError;
 
@@ -171,6 +173,20 @@ impl Connection {
 
     fn state_file(&self) -> PathBuf {
         self.directory.join(STATE_FILE)
+    }
+
+    ///Read the saved state. None is returned if nothing was saved yet or the file
+    /// cannot be read
+    fn read_values(&self) -> Option<Values> {
+        match std::fs::read_to_string(self.state_file()) {
+            Ok(text) => Some(Values::from_text(&text)),
+            //nothing was saved yet
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                eprintln!("Unable to read the saved state: {e}");
+                None
+            }
+        }
     }
 
     fn save(&self, values: &Values) -> std::io::Result<()> {
@@ -327,6 +343,13 @@ impl Session {
                 ))
             })?;
         }
+        if let Some(values) = session
+            .connection
+            .as_ref()
+            .and_then(Connection::read_values)
+        {
+            window::restore(&values);
+        }
         Ok(session)
     }
 
@@ -361,13 +384,8 @@ impl Session {
 
     ///Restore the state saved in the session into the given state
     pub fn load<T: Persistent>(&self, mut state: T) -> T {
-        if let Some(connection) = &self.connection {
-            match std::fs::read_to_string(connection.state_file()) {
-                Ok(text) => state.load(&Values::from_text(&text)),
-                //nothing was saved yet
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => eprintln!("Unable to read the saved state: {e}"),
-            }
+        if let Some(values) = self.connection.as_ref().and_then(Connection::read_values) {
+            state.load(&values);
         }
         state
     }
@@ -432,7 +450,13 @@ impl Session {
             );
         }
         connection.reply(OPEN, "Ready");
-        std::thread::spawn(move || connection.run(state));
+        std::thread::spawn(move || {
+            connection.run(|| {
+                let mut values = state();
+                window::save(&mut values);
+                values
+            })
+        });
     }
 }
 

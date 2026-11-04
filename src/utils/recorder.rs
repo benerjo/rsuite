@@ -373,7 +373,7 @@ pub fn record() -> Result<(), CommonError> {
     let title = session.window_title("Recorder");
     let active_client = session.activate(client, synth, state)?;
 
-    eframe::run_native(
+    nsm::run_window(
         &title,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),

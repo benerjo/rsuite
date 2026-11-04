@@ -342,7 +342,7 @@ pub fn transposer() -> Result<(), CommonError> {
     let synth = Transposer::new(&client, rcv_from_ui, send_to_ui, state.clone())?;
     let active_client = session.activate(client, synth, state)?;
 
-    eframe::run_native(
+    nsm::run_window(
         &client_name,
         eframe::NativeOptions {
             viewport: ViewportBuilder::default().with_inner_size(egui::vec2(320.0, 640.0)),

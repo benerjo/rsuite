@@ -171,6 +171,8 @@ Every program can be managed by the [New Session Manager](https://new-session-ma
 When started by a session manager, a program:
 * uses the JACK client name chosen by the session manager, so that the connections can be restored
 * restores its state when it starts and saves it when the session is saved. The state contains every parameter that can be configured and the midi controls that are mapped to them
+* restores the position and size of its window. If the saved position is no longer visible (screen resolution changed, monitor unplugged...), the window is moved back on a screen and shrunk to fit it
+* shows its window with the title 'client name - client id'
 * quits when the session is closed
 
 The state is written in the file 'state.conf', in the directory of the program inside the session.
