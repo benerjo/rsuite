@@ -167,6 +167,10 @@ pub fn common_menu_luncher(ui: &mut eframe::egui::Ui, messages: &mut Vec<String>
             start_command("distortion", messages);
             ui.close();
         }
+        if ui.button("Reverb").clicked() {
+            start_command("reverb", messages);
+            ui.close();
+        }
         if ui.button("Smooth").clicked() {
             start_command("smooth", messages);
             ui.close();

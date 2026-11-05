@@ -12,6 +12,7 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
     * [Effects](#effects)
         * [Chorus](#chorus)
         * [Distortion](#distortion)
+        * [Reverb](#reverb)
         * [Smooth](#smooth)
     * [Utils](#utils)
         * [Activator](#activator)
@@ -97,6 +98,18 @@ The different elements that can be configured:
 * Drive: the amount of amplification before the signal is clipped
 * Tone: the cutoff frequency of the low pass filter, in hertz. At 0, no sound goes through
 * Volume: the volume of the output, between 0 and 1
+
+#### Reverb
+
+Simulate the reflections of the sound on the walls of a room.
+After the pre-delay, the audio signal goes through several delays whose output is fed back to their input: each one produces echoes that slowly fade away.
+The echoes are then spread so that they are no longer heard one by one.
+
+The different elements that can be configured:
+* Size: the size of the room, between 0 and 1. The bigger the room, the longer the reverberation
+* Damping: how much the high frequencies are absorbed by the walls, between 0 and 1
+* Pre-delay: the time before the first echo is heard, in milliseconds
+* Mix: the proportion of reverberated signal in the output, between 0 and 1
 
 #### Smooth
 
