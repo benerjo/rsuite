@@ -1,0 +1,10 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "mididebug"
+version.workspace = true
+
+[dependencies]
+rsuite.workspace = true
+jack.workspace = true

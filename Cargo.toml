@@ -1,13 +1,31 @@
-[package]
+[workspace]
+resolver = "2"
+members = [
+    "a440",
+    "activator",
+    "chorus",
+    "distortion",
+    "kick",
+    "loop",
+    "metronome",
+    "mididebug",
+    "recorder",
+    "reverb",
+    "rsuite",
+    "rsynth",
+    "smooth",
+    "snare",
+    "transposer",
+]
+
+[workspace.package]
 authors = ["Benerjo <benerjo@gmail.com>"]
-description = "A collection of programs to make musing using JACK."
 edition = "2021"
 license = "GPLv3"
-name = "rsuite"
-readme = "README.md"
 version = "0.0.1"
 
-[dependencies]
+[workspace.dependencies]
+rsuite = { path = "rsuite" }
 jack-sys = "0.5"
 libc = "0.2"
 jack = "0.13"
@@ -18,44 +36,3 @@ egui_plot = "0.36.0"
 chrono = "0.4"
 rand = "0.10"
 enum-iterator = "2.3"
-
-[[bin]]
-name = "rsynth"
-path = "src/bin/rsynth.rs"
-[[bin]]
-name = "mididebug"
-path = "src/bin/mididebug.rs"
-[[bin]]
-name = "chorus"
-path = "src/bin/chorus.rs"
-[[bin]]
-name = "distortion"
-path = "src/bin/distortion.rs"
-[[bin]]
-name = "reverb"
-path = "src/bin/reverb.rs"
-[[bin]]
-name = "smooth"
-path = "src/bin/smooth.rs"
-[[bin]]
-name = "recorder"
-path = "src/bin/recorder.rs"
-[[bin]]
-name = "kick"
-path = "src/bin/kick.rs"
-[[bin]]
-name = "transposer"
-path = "src/bin/transposer.rs"
-[[bin]]
-name = "loop"
-path = "src/bin/loop.rs"
-[[bin]]
-name = "metronome"
-path = "src/bin/metronome.rs"
-[[bin]]
-name = "a440"
-path = "src/bin/a440.rs"
-
-[features]
-default = []
-metadata = []

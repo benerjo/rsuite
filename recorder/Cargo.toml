@@ -1,0 +1,13 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "recorder"
+version.workspace = true
+
+[dependencies]
+rsuite.workspace = true
+jack.workspace = true
+riff.workspace = true
+eframe.workspace = true
+chrono.workspace = true

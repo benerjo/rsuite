@@ -1,0 +1,15 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "looper"
+version.workspace = true
+
+[[bin]]
+name = "loop"
+path = "src/main.rs"
+
+[dependencies]
+rsuite.workspace = true
+jack.workspace = true
+eframe.workspace = true

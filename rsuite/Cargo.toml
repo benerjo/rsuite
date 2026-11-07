@@ -1,0 +1,21 @@
+[package]
+authors.workspace = true
+description = "A collection of programs to make musing using JACK."
+edition.workspace = true
+license.workspace = true
+name = "rsuite"
+readme = "../README.md"
+version.workspace = true
+
+[dependencies]
+jack-sys.workspace = true
+libc.workspace = true
+jack.workspace = true
+eframe.workspace = true
+winit.workspace = true
+egui_plot.workspace = true
+enum-iterator.workspace = true
+
+[features]
+default = []
+metadata = []

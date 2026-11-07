@@ -1,0 +1,12 @@
+[package]
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+name = "snare"
+version.workspace = true
+
+[dependencies]
+rsuite.workspace = true
+jack.workspace = true
+eframe.workspace = true
+rand.workspace = true
