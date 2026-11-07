@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use crate::music::Pitch;
 use crate::{midiinput::MidiInput, utils::KeyBoardKeySetter};
 use crate::{
     nsm::{self, Stateful},
@@ -338,6 +339,7 @@ impl Player {
 
             let nb_notes = self.velocity.len();
 
+            //loop over every single note that exist to check which has to be played
             for note_index in 0..nb_notes {
                 let fade = if self.play[note_index] || self.fade_in[note_index] < 1.0 {
                     if self.fade_in[note_index] > 1.0 {
@@ -364,10 +366,11 @@ impl Player {
                 if fade > 0.0 {
                     let overtones_freq = &self.config.overtone_freq;
                     let overtones_impact = &self.config.overtone;
+                    let base_freq = Pitch::get_frequency_from_index(note_index as f64);
                     for overtone_index in
                         0..std::cmp::min(overtones_freq.len(), overtones_impact.len())
                     {
-                        let x = Self::get_frequency(note_index as f64)
+                        let x = base_freq
                             * overtones_freq[overtone_index]
                             * self.time
                             * 2.0

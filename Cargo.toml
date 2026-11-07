@@ -17,6 +17,7 @@ winit = "0.30"
 egui_plot = "0.36.0"
 chrono = "0.4"
 rand = "0.10"
+enum-iterator = "2.3"
 
 [[bin]]
 name = "rsynth"
@@ -51,6 +52,9 @@ path = "src/bin/loop.rs"
 [[bin]]
 name = "metronome"
 path = "src/bin/metronome.rs"
+[[bin]]
+name = "a440"
+path = "src/bin/a440.rs"
 
 [features]
 default = []

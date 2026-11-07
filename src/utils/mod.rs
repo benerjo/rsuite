@@ -1,9 +1,11 @@
+mod a440;
 mod activate;
 mod looper;
 mod metronome;
 mod recorder;
 mod transposer;
 
+pub use a440::a440;
 pub use activate::activator;
 use egui_plot::{Line, PlotPoints};
 pub use looper::looper;
@@ -177,6 +179,10 @@ pub fn common_menu_luncher(ui: &mut eframe::egui::Ui, messages: &mut Vec<String>
         }
     });
     ui.menu_button("Utils", |ui| {
+        if ui.button("A440").clicked() {
+            start_command("a440", messages);
+            ui.close();
+        }
         if ui.button("Activator").clicked() {
             start_command("activator", messages);
             ui.close();

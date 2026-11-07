@@ -15,6 +15,7 @@ In order to perform the music, the [JACK Audio Connection Kit](https://jackaudio
         * [Reverb](#reverb)
         * [Smooth](#smooth)
     * [Utils](#utils)
+        * [A440](#a440)
         * [Activator](#activator)
         * [Loop](#loop)
         * [Metronome](#metronome)
@@ -126,6 +127,13 @@ The different elements taht can be configured:
 ### Utils
 
 A collection of utilities.
+
+#### A440
+
+Mimic the press of a keyboard key for the A440 note (A4).
+It only has a midi output.
+
+The user interface consists of a single button: pressing it sends a note-on, releasing it sends a note-off.
 
 #### Activator
 
