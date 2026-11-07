@@ -153,15 +153,6 @@ impl Player {
         }
     }
 
-    fn get_frequency(note_index: f64) -> f64 {
-        let index = note_index + 1.0;
-        let mid_a_freq = 440.0;
-        let a5_index: f64 = 4.0 * 12.0 + 10.0;
-        let b: f64 = (2.0 as f64).powf(1.0 / 12.0);
-        let a: f64 = mid_a_freq / ((2.0 as f64).powf(a5_index / 12.0));
-        a * b.powf(index)
-    }
-
     /// Send a notification to the change listener
     fn send(change_listener: &mut std::sync::mpsc::Sender<MessageToUI>, to_send: MessageToUI) {
         if let Err(e) = change_listener.send(to_send) {
